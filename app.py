@@ -8,7 +8,7 @@ import sqlite3
 import time
 from reminders import install as install_reminders, reconcile
 from tasks import install as install_tasks, cancel_page
-from datetime import timedelta
+from datetime import timedelta, date, datetime, timezone
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, session, send_from_directory, Response
@@ -44,6 +44,9 @@ with db() as c:
       content TEXT NOT NULL, state TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,
       archived INTEGER NOT NULL DEFAULT 0, author TEXT NOT NULL,
       revision INTEGER NOT NULL DEFAULT 1, created REAL NOT NULL, updated REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS page_focus (page_id TEXT PRIMARY KEY, focus_date TEXT);
+    CREATE TABLE IF NOT EXISTS desktop_order (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, ids TEXT NOT NULL);
+    INSERT OR IGNORE INTO desktop_order VALUES (1,1,'[]');
     CREATE TABLE IF NOT EXISTS attempts (ip TEXT NOT NULL, at REAL NOT NULL);
     ''')
 
@@ -170,7 +173,7 @@ def decode(row):
 
 def validate(body, creating=False):
     if not isinstance(body, dict): abort(400, '页面内容应为对象。')
-    allowed = {'title', 'kind', 'content', 'state', 'pinned', 'archived', 'revision'}
+    allowed = {'title', 'kind', 'content', 'state', 'pinned', 'archived', 'revision', 'focus_date'}
     if set(body) - allowed: abort(400, '包含不支持的字段。')
     if creating and not {'title', 'kind'} <= set(body): abort(400, '需要标题和页面类型。')
     if 'title' in body and (not isinstance(body['title'], str) or not 1 <= len(body['title'].strip()) <= 120):
@@ -178,6 +181,10 @@ def validate(body, creating=False):
     if 'kind' in body and body['kind'] not in ('checklist', 'canvas'): abort(400, '不支持的页面类型。')
     if 'state' in body and not isinstance(body['state'], dict): abort(400, '页面状态应为对象。')
     if 'content' in body and not isinstance(body['content'], dict): abort(400, '页面内容应为对象。')
+    if body.get('focus_date') is not None:
+        try:
+            if date.fromisoformat(body['focus_date']).isoformat()!=body['focus_date']: raise ValueError()
+        except (ValueError, TypeError): abort(400, '关注日期应为 YYYY-MM-DD，或留空。')
     for k in ('pinned', 'archived'):
         if k in body and type(body[k]) is not bool: abort(400, '状态应为 true 或 false。')
 
@@ -199,17 +206,42 @@ def validate_page(kind, content, state):
 @app.get('/api/pages')
 def pages():
     with db() as c:
-        rows = c.execute('SELECT * FROM pages ORDER BY updated DESC').fetchall()
+        rows = c.execute('SELECT pages.*,page_focus.focus_date FROM pages LEFT JOIN page_focus ON pages.id=page_focus.page_id ORDER BY pinned DESC,updated DESC,id').fetchall()
+        order = c.execute('SELECT * FROM desktop_order WHERE id=1').fetchone()
+    ranks={pid:i for i,pid in enumerate(json.loads(order['ids']))}
+    rows=sorted(rows,key=lambda r:ranks.get(r['id'],-1))
+    through=(datetime.now(timezone(timedelta(hours=8))).date()+timedelta(days=6)).isoformat()
     result = []
     for row in rows:
         p = decode(row)
         items = p['state'].get('items', []) if p['kind'] == 'checklist' else []
+        p['needs_focus']=bool(not p['archived'] and p['focus_date'] and p['focus_date']<=through)
         p['total'] = len(items)
         p['done'] = sum(bool(i.get('done')) for i in items)
         p['preview'] = [i['text'] for i in items if not i.get('done')][:3]
         del p['content'], p['state']
         result.append(p)
-    return {'pages': result}
+    return {'pages': result, 'order_revision':order['revision'], 'focus_through':through}
+
+@app.post('/api/pages/order')
+def order_pages():
+    body=request.get_json()
+    if not isinstance(body,dict) or type(body.get('revision')) is not int:abort(400,'需要排序版本。')
+    ids=body.get('ids')
+    if not isinstance(ids,list) or not ids or any(not isinstance(x,str) for x in ids) or len(set(ids))!=len(ids):abort(400,'页面编号不得重复或为空。')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        order=c.execute('SELECT * FROM desktop_order WHERE id=1').fetchone()
+        if order['revision']!=body['revision']:abort(409,'顺序刚被修改，请刷新后重试。')
+        all_ids=[r['id'] for r in c.execute('SELECT id FROM pages ORDER BY pinned DESC,updated DESC,id')]
+        if not set(ids)<=set(all_ids):abort(409,'页面已变化，请刷新后重试。')
+        saved=[x for x in json.loads(order['ids']) if x in all_ids]
+        current=[x for x in all_ids if x not in saved]+saved
+        # Reorder only visible slots, preserving hidden pages' relative positions.
+        selected=set(ids); replacements=iter(ids)
+        merged=[next(replacements) if x in selected else x for x in current]
+        c.execute('UPDATE desktop_order SET ids=?,revision=revision+1 WHERE id=1',(json.dumps(merged),))
+    return {'ok':True,'revision':order['revision']+1}
 
 @app.post('/api/pages')
 def create():
@@ -222,12 +254,13 @@ def create():
         c.execute('INSERT INTO pages VALUES (?,?,?,?,?,?,?,?,?,?,?)', (
             page_id, body['title'].strip(), body['kind'], json.dumps(content), json.dumps(state),
             bool(body.get('pinned')), bool(body.get('archived')), actor(), 1, now, now))
+        c.execute('INSERT INTO page_focus VALUES (?,?)',(page_id,body.get('focus_date')))
     return get_page(page_id), 201
 
 @app.get('/api/pages/<page_id>')
 def get_page(page_id):
     with db() as c:
-        row = c.execute('SELECT * FROM pages WHERE id=?', (page_id,)).fetchone()
+        row = c.execute('SELECT pages.*,page_focus.focus_date FROM pages LEFT JOIN page_focus ON pages.id=page_focus.page_id WHERE pages.id=?', (page_id,)).fetchone()
     if not row: abort(404, '这个页面不存在或已删除。')
     return decode(row)
 
@@ -244,11 +277,12 @@ def update(page_id):
     if type(body.get('revision')) is not int: abort(400, '请先读取页面的最新版本。')
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
-        row = c.execute('SELECT * FROM pages WHERE id=?', (page_id,)).fetchone()
+        row = c.execute('SELECT pages.*,page_focus.focus_date FROM pages LEFT JOIN page_focus ON pages.id=page_focus.page_id WHERE pages.id=?', (page_id,)).fetchone()
         if not row: abort(404, '这个页面不存在或已删除。')
         old = decode(row)
         if body['revision'] != old['revision']: abort(409, '页面刚被修改，请重新读取后再修改。你的更改尚未保存。')
         new = old | body
+        if 'focus_date' in body:c.execute('INSERT OR REPLACE INTO page_focus VALUES (?,?)',(page_id,body['focus_date']))
         if new['kind'] != old['kind']: abort(400, '已有页面不能更换类型，请另建页面。')
         validate_page(new['kind'], new['content'], new['state'])
         reconcile(c, page_id, new['state'], bool(new['archived']))
@@ -265,6 +299,7 @@ def delete(page_id):
     with db() as c:
         result = c.execute('DELETE FROM pages WHERE id=? AND revision=?', (page_id, body['revision']))
         if not result.rowcount: abort(409, '页面已变化，请刷新后再删除。')
+        c.execute('DELETE FROM page_focus WHERE page_id=?', (page_id,))
         c.execute('DELETE FROM reminders WHERE page_id=?', (page_id,))
         cancel_page(c, page_id)
         c.execute("UPDATE tasks SET snapshot='{}',instructions='',result=NULL WHERE page_id=?",(page_id,))

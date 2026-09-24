@@ -1,5 +1,5 @@
 const $ = s => document.querySelector(s);
-let current = null, tab = 'desk', busy = false, setupToken = '', toastTimer;
+let current = null, tab = 'all', busy = false, setupToken = '', toastTimer;
 function toast(text) { $('#toast').textContent=text; $('#toast').style.display='block'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').style.display='none',5500); }
 async function api(path, method='GET', body) {
   const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-Mango-Request':'1'},body:body===undefined?undefined:JSON.stringify(body)});
@@ -29,17 +29,60 @@ async function route(){
 }
 window.addEventListener('hashchange',()=>location.hash.startsWith('#enable-reminders=')?boot():route());
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(x=>x.removeAttribute('aria-current'));b.setAttribute('aria-current','page');loadShelf().catch(e=>toast(e.message));});
+let shelfRevision=1, shelfSaving=false, focusPage=null;
 async function loadShelf(){
-  const {pages}=await api('pages');
-  const visible=pages.filter(p=>tab==='archive'?p.archived:tab==='all'?true:!p.archived).sort((a,b)=>(b.pinned-a.pinned)||(b.updated-a.updated));
+  const data=await api('pages');shelfRevision=data.order_revision;
+  const visible=data.pages.filter(p=>tab==='archive'?p.archived:!p.archived&&(tab!=='focus'||p.needs_focus));
+  $('#shelf-hint').textContent=tab==='focus'?`关注日期截至 ${data.focus_through}（北京时间）；包含已到期未收起的页面。`:'拖动卡片左上角调整顺序；点击日期设置关注时间。';
   $('#count').textContent=visible.length+' 个页面';$('#cards').replaceChildren();$('#empty').hidden=!!visible.length;
+  $('#empty h2').textContent=tab==='focus'?'近期没有需要关注的页面':'留一点空白。';
+  $('#empty p').textContent=tab==='focus'?'在「全部」中给页面设置关注日期，到时会自动出现在这里。':'创建一张清单，或让 lychee、olive 为你制作页面。';
   for(const p of visible){
-    const card=el('a','card');card.href='#page='+p.id;card.dataset.author=p.author;
-    const top=el('div','card-top');top.append(el('span','',p.kind==='checklist'?'清单':'自定义页面'),el('span','',p.archived?'已收起':p.pinned?'留着':'最近'));card.append(top,el('h2','',p.title));
-    if(p.kind==='checklist'){const ul=el('ul','preview');p.preview.forEach(t=>ul.append(el('li','',t)));if(!p.total)ul.append(el('li','','还没有内容'));else if(p.done===p.total)ul.append(el('li','','都完成了'));card.append(ul);}
-    const bottom=el('div','card-bottom');bottom.append(el('span','',p.kind==='checklist'?`${p.done} / ${p.total} 已完成`:'打开看看'),el('span','',`${author(p.author)} · ${date(p.updated)}`));card.append(bottom);$('#cards').append(card);
+    const card=el('article','card');card.dataset.pageId=p.id;card.dataset.author=p.author;
+    const top=el('div','card-top'),handle=el('button','quiet card-drag','⠿');handle.type='button';handle.setAttribute('aria-label','排序 '+p.title);handle.title='拖动排序，也可用方向键移动';
+    const focus=el('button','quiet card-focus',p.focus_date?`${p.focus_date.slice(5).replace('-','/')} 关注`:'设置关注');focus.type='button';focus.setAttribute('aria-label','关注日期 '+p.title);focus.onclick=()=>openFocus(p.id).catch(e=>toast(e.message));
+    top.append(handle,el('span','card-kind',p.pinned?'留着':p.kind==='checklist'?'清单':'页面'),focus);card.append(top);
+    const link=el('a','card-open');link.href='#page='+p.id;link.append(el('h2','',p.title));
+    if(p.kind==='checklist'){const ul=el('ul','preview');p.preview.slice(0,2).forEach(t=>ul.append(el('li','',t)));if(!p.total)ul.append(el('li','','还没有内容'));else if(p.done===p.total)ul.append(el('li','','都完成了'));link.append(ul);}
+    const bottom=el('div','card-bottom');bottom.append(el('span','',p.kind==='checklist'?`${p.done} / ${p.total} 已完成`:'打开看看'),el('span','',`${author(p.author)} · ${date(p.updated)}`));link.append(bottom);card.append(link);$('#cards').append(card);bindCardDrag(card,handle);
   }
 }
+async function saveShelfOrder(ids){
+  if(shelfSaving)return;
+  shelfSaving=true;
+  try{await api('pages/order','POST',{revision:shelfRevision,ids});toast('桌面顺序已保存');}
+  catch(e){toast(e.message);}
+  finally{shelfSaving=false;await loadShelf();}
+}
+function bindCardDrag(card,handle){
+  let moving=false,original=[];
+  const ids=()=>[...$('#cards').children].map(x=>x.dataset.pageId);
+  handle.onkeydown=e=>{
+    if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)||shelfSaving)return;
+    e.preventDefault();const order=ids(),i=order.indexOf(card.dataset.pageId),j=i+(['ArrowUp','ArrowLeft'].includes(e.key)?-1:1);
+    if(j<0||j>=order.length)return;[order[i],order[j]]=[order[j],order[i]];
+    saveShelfOrder(order).then(()=>$('#cards').querySelector(`[data-page-id="${card.dataset.pageId}"] .card-drag`)?.focus());
+  };
+  handle.onpointerdown=e=>{if(e.button!==0||shelfSaving)return;e.preventDefault();moving=true;original=ids();card.classList.add('card-moving');handle.setPointerCapture(e.pointerId);};
+  handle.onpointermove=e=>{
+    if(!moving)return;
+    const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('#cards .card');
+    if(target&&target!==card){const children=[...$('#cards').children];$('#cards').insertBefore(card,children.indexOf(card)<children.indexOf(target)?target.nextSibling:target);handle.setPointerCapture(e.pointerId);}
+    if(e.clientY<70)window.scrollBy(0,-16);else if(e.clientY>innerHeight-70)window.scrollBy(0,16);
+  };
+  handle.onpointerup=()=>{if(!moving)return;moving=false;card.classList.remove('card-moving');const next=ids();if(next.join()!==original.join())saveShelfOrder(next);};
+  handle.onpointercancel=()=>{moving=false;card.classList.remove('card-moving');loadShelf().catch(e=>toast(e.message));};
+}
+async function openFocus(id){focusPage=await api('pages/'+id);$('#focus-title').textContent=focusPage.title;$('#focus-date').value=focusPage.focus_date||'';$('#focus-dialog').showModal();}
+$('#focus-date-button').onclick=()=>openFocus(current.id).catch(e=>toast(e.message));
+$('#focus-cancel').onclick=()=>$('#focus-dialog').close();
+$('#focus-clear').onclick=()=>{$('#focus-date').value='';};
+$('#focus-form').onsubmit=async e=>{
+  e.preventDefault();e.submitter.disabled=true;
+  try{const updated=await api('pages/'+focusPage.id,'PATCH',{revision:focusPage.revision,focus_date:$('#focus-date').value||null});$('#focus-dialog').close();if(current?.id===updated.id){current=updated;renderPage();}else await loadShelf();toast('关注日期已保存');}
+  catch(error){toast(error.message);if(error.status===409){focusPage=await api('pages/'+focusPage.id);}}
+  finally{e.submitter.disabled=false;}
+};
 function createDialog(){$('#create-form').reset();$('#create-dialog').showModal();$('#new-title').focus();}
 function askText(title,value,max=500){
   const dialog=$('#edit-dialog'),input=$('#edit-value');$('#edit-heading').textContent=title;input.value=value;input.maxLength=max;dialog.returnValue='';dialog.showModal();input.focus();input.select();
@@ -48,7 +91,7 @@ function askText(title,value,max=500){
 $('#edit-cancel').onclick=()=>$('#edit-dialog').close('cancel');
 $('#edit-form').onsubmit=e=>{e.preventDefault();if(!$('#edit-value').value.trim())return;$('#edit-dialog').close('save');};
 $('#new-page').onclick=createDialog;$('#empty-create').onclick=createDialog;$('#create-cancel').onclick=()=>$('#create-dialog').close();
-$('#create-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{const p=await api('pages','POST',{title:$('#new-title').value.trim(),kind:'checklist',pinned:$('#new-pinned').checked,state:{items:[]}});$('#create-dialog').close();location.hash='page='+p.id;}catch(e){toast(e.message);}finally{e.submitter.disabled=false;}};
+$('#create-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{const p=await api('pages','POST',{title:$('#new-title').value.trim(),kind:'checklist',pinned:$('#new-pinned').checked,focus_date:$('#new-focus-date').value||null,state:{items:[]}});$('#create-dialog').close();location.hash='page='+p.id;}catch(e){toast(e.message);}finally{e.submitter.disabled=false;}};
 async function change(patch, redraw=true){
   if(busy)throw new Error('上一项正在保存，请稍等。');
   const pageId=current.id;
@@ -59,6 +102,7 @@ async function change(patch, redraw=true){
 }
 function renderPage(){
   const p=current;document.title=p.title+' · mangosalad';$('#page-title').textContent=p.title;$('#page-kind').textContent=p.kind==='checklist'?'清单':'自定义页面';$('#page-meta').textContent=`${author(p.author)} 最近修改 · ${date(p.updated)}`;$('#pin').textContent=p.pinned?'取消留着':'留在桌面';$('#archive').textContent=p.archived?'放回桌面':'用完了';$('#checklist').hidden=p.kind!=='checklist';$('#canvas').hidden=p.kind!=='canvas';
+  $('#focus-date-button').textContent=p.focus_date?`${p.focus_date} 关注`:'设置关注日期';
   if(taskPageId!==p.id)for(const id of ['task-agent','task-time','task-instructions','task-submit'])$('#'+id).disabled=true;
   refreshTasks(p.id).catch(e=>toast(e.message));
   if(p.kind==='canvas'){renderCanvas();return;}
