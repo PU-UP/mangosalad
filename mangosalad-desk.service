@@ -1,0 +1,17 @@
+[Unit]
+Description=Mangosalad private interactive pages
+After=network.target
+
+[Service]
+WorkingDirectory=/home/ubuntu/mangosalad-desk
+Environment=MANGO_DATA=/home/ubuntu/.local/share/mangosalad/runtime
+Environment=MANGO_PUBLIC=1
+Environment=PYTHONPATH=/home/ubuntu/mangosalad-desk/vendor
+ExecStart=/usr/bin/python3 -m gunicorn --bind 127.0.0.1:5010 --workers 1 --threads 4 --timeout 30 app:app
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

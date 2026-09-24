@@ -1,0 +1,6 @@
+[Unit]
+Description=Snapshot Mangosalad page data
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/ubuntu/mangosalad-desk/backup.py
+UMask=0077

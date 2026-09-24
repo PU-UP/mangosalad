@@ -1,0 +1,19 @@
+[Unit]
+Description=Mangosalad whole-page Agent dispatcher
+After=network-online.target mangosalad-desk.service
+
+[Service]
+WorkingDirectory=/home/ubuntu/mangosalad-desk
+Environment=MANGO_DATA=/home/ubuntu/.local/share/mangosalad/runtime
+Environment=PATH=/home/ubuntu/.local/bin:/home/ubuntu/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /home/ubuntu/mangosalad-desk/task_worker.py
+ExecStop=/usr/bin/python3 /home/ubuntu/mangosalad-desk/task_worker.py stop
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=35
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

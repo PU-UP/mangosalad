@@ -1,0 +1,19 @@
+# Runtime and private material must never be versioned.
+/data/
+/backups/
+/qa-data/
+/vendor/
+/.venv/
+__pycache__/
+*.py[cod]
+*.sqlite*
+*.db
+*.log
+.env*
+*.token
+*.pem
+*.key
+private.json
+delivery.json
+last-backup.txt
+update-notice.txt

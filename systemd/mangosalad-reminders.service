@@ -1,0 +1,11 @@
+[Unit]
+Description=Mangosalad single-shot reminders
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/mangosalad-desk
+Environment=MANGO_DATA=/home/ubuntu/mangosalad-desk/data
+ExecStart=/usr/bin/python3 /home/ubuntu/mangosalad-desk/reminder_worker.py
+UMask=0077
+NoNewPrivileges=true
+TimeoutStartSec=300

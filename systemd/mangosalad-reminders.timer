@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Mangosalad reminders every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+Unit=mangosalad-reminders.service
+
+[Install]
+WantedBy=timers.target
