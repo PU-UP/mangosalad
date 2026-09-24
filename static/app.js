@@ -1,5 +1,5 @@
 const $ = s => document.querySelector(s);
-let current = null, tab = 'all', busy = false, setupToken = '', toastTimer;
+let current = null, tab = 'focus', busy = false, setupToken = '', toastTimer;
 function toast(text) { $('#toast').textContent=text; $('#toast').style.display='block'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').style.display='none',5500); }
 async function api(path, method='GET', body) {
   const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-Mango-Request':'1'},body:body===undefined?undefined:JSON.stringify(body)});
