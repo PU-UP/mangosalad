@@ -210,7 +210,7 @@ def pages():
         order = c.execute('SELECT * FROM desktop_order WHERE id=1').fetchone()
     ranks={pid:i for i,pid in enumerate(json.loads(order['ids']))}
     rows=sorted(rows,key=lambda r:ranks.get(r['id'],-1))
-    through=(datetime.now(timezone(timedelta(hours=8))).date()+timedelta(days=6)).isoformat()
+    through=datetime.now(timezone(timedelta(hours=8))).date().isoformat()
     result = []
     for row in rows:
         p = decode(row)

@@ -8,7 +8,7 @@ with tempfile.TemporaryDirectory() as tmp:
  def create(title,focus=None):
   r=c.post('/api/pages',headers=h,json={'title':title,'kind':'checklist','state':{'items':[]},'focus_date':focus});assert r.status_code==201;return r.json
  today=datetime.now(timezone(timedelta(hours=8))).date()
- a=create('overdue',(today-timedelta(days=1)).isoformat());b=create('this week',(today+timedelta(days=6)).isoformat());d=create('later',(today+timedelta(days=7)).isoformat());e=create('undated')
+ a=create('overdue',(today-timedelta(days=1)).isoformat());b=create('today',today.isoformat());d=create('tomorrow',(today+timedelta(days=1)).isoformat());e=create('undated')
  data=c.get('/api/pages').json
  assert {p['id'] for p in data['pages'] if p['needs_focus']}=={a['id'],b['id']}
  before=[p['id'] for p in data['pages']];visible=[a['id'],d['id']]
@@ -26,4 +26,6 @@ with tempfile.TemporaryDirectory() as tmp:
  assert c.patch('/api/pages/'+a['id'],headers=h,json={'revision':1,'archived':True}).status_code==200
  assert not next(p for p in c.get('/api/pages').json['pages'] if p['id']==a['id'])['needs_focus']
  assert c.get('/api/pages').json['order_revision']==after['order_revision']
- print('PASS desktop: dates, Beijing seven-day boundary, null/invalid/conflict, archive, persistent subset order, concurrent sort rejection')
+ assert c.delete('/api/pages/'+b['id'],headers=h,json={'revision':1}).status_code==200
+ assert all(p['id']!=b['id'] for p in c.get('/api/pages').json['pages'])
+ print('PASS desktop: dates, Beijing today boundary, null/invalid/conflict, archive, persistent subset order, concurrent sort rejection')

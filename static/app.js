@@ -33,7 +33,7 @@ let shelfRevision=1, shelfSaving=false, focusPage=null;
 async function loadShelf(){
   const data=await api('pages');shelfRevision=data.order_revision;
   const visible=data.pages.filter(p=>tab==='archive'?p.archived:!p.archived&&(tab!=='focus'||p.needs_focus));
-  $('#shelf-hint').textContent=tab==='focus'?`关注日期截至 ${data.focus_through}（北京时间）；包含已到期未收起的页面。`:'拖动卡片左上角调整顺序；点击日期设置关注时间。';
+  $('#shelf-hint').textContent=tab==='focus'?`显示关注日期不晚于今天（${data.focus_through}，北京时间）的未结束页面。`:'拖动卡片左上角调整顺序；点击日期设置关注时间。';
   $('#count').textContent=visible.length+' 个页面';$('#cards').replaceChildren();$('#empty').hidden=!!visible.length;
   $('#empty h2').textContent=tab==='focus'?'近期没有需要关注的页面':'留一点空白。';
   $('#empty p').textContent=tab==='focus'?'在「全部」中给页面设置关注日期，到时会自动出现在这里。':'创建一张清单，或让 lychee、olive 为你制作页面。';
