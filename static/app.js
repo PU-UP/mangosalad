@@ -172,32 +172,52 @@ window.addEventListener('message',async event=>{
   }
 });
 boot();
-let currentTask=null,taskPageId=null;
-const taskLabels={queued:'等待指定时间',dispatching:'正在联系 Agent',running:'Agent 已接单，处理中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',needs_input:'需要你回复',failed:'未完成',interrupted:'处理被中断'};
-function taskTime(ts){return new Date(ts*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
+let currentTask=null,taskPageId=null,taskSubmitting=false,historySignature='';
+const taskLabels={queued:'等待指定时间',dispatching:'正在联系 Agent',running:'Agent 已接单，处理中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',needs_input:'已联系，等待你回复',failed:'未完成',interrupted:'处理被中断'};
+function taskTime(ts){return new Date(ts*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
+function clearTaskDraft(){$('#task-form').reset();$('#task-error').textContent='';}
+function renderTaskHistory(tasks,pageId){
+  const signature=pageId+JSON.stringify(tasks);if(signature===historySignature)return;
+  const opened=new Set([...document.querySelectorAll('#task-history-list details[open]')].map(x=>x.dataset.taskId));
+  historySignature=signature;const list=$('#task-history-list');list.replaceChildren();
+  if(!tasks.length){list.append(el('p','muted','还没有安排。提交后会在这里保留进展和结果。'));return;}
+  for(const task of tasks){
+    const record=el('details','task-record');record.dataset.taskId=task.id;record.open=opened.has(task.id);
+    const summary=el('summary','');summary.append(el('span','',`${task.agent} · ${taskTime(task.run_at)}`),el('span','task-record-status',taskLabels[task.status]||task.status));record.append(summary);
+    const body=el('div','task-record-body');
+    body.append(el('p','task-request',task.instructions||'按当时确认的整页内容处理。'));
+    const steps=el('ul','task-timeline');steps.append(el('li','',`${taskTime(task.created)} · 已确认提交`));
+    if(task.acknowledged)steps.append(el('li','',`${taskTime(task.acknowledged)} · Agent 已接单`));
+    if(!['queued','dispatching','running'].includes(task.status))steps.append(el('li','',`${taskTime(task.updated)} · ${taskLabels[task.status]||task.status}`));
+    body.append(steps);
+    if(task.result){body.append(el('div','task-result',task.result));body.append(el('p','muted',task.delivered?'飞书已发送':'飞书发送待确认'));}
+    if(task.error)body.append(el('p','error',task.error));
+    record.append(body);list.append(record);
+  }
+}
 async function refreshTasks(pageId){
   const data=await api('pages/'+pageId+'/tasks');if(current?.id!==pageId)return;
-  const task=data.tasks[0]||null,changed=taskPageId!==pageId||currentTask?.id!==task?.id;
-  taskPageId=pageId;currentTask=task;
-  if(changed){$('#task-agent').value=task?.agent||'lychee';$('#task-time').value=task?new Date(task.run_at*1000+8*3600000).toISOString().slice(0,16):'';$('#task-instructions').value=task?.instructions||'';}
-  const active=task&&['queued','dispatching','running','cancelling'].includes(task.status);
-  for(const id of ['task-agent','task-time','task-instructions'])$('#'+id).disabled=!!active||!!current.archived;
-  $('#task-submit').disabled=!!active||!data.enabled||!!current.archived;
-  $('#task-submit').textContent=active?'已确定交给 '+task.agent:'确定交给 Agent';
+  if(taskPageId!==pageId){clearTaskDraft();historySignature='';}
+  taskPageId=pageId;
+  currentTask=data.tasks.find(t=>['queued','dispatching','running','cancelling'].includes(t.status))||null;
+  for(const id of ['task-agent','task-time','task-instructions'])$('#'+id).disabled=!!current.archived||taskSubmitting;
+  $('#task-submit').disabled=!!currentTask||!data.enabled||!!current.archived||taskSubmitting;
+  $('#task-submit').textContent=currentTask?'当前安排结束或取消后可提交':'确定交给 Agent';
   $('#task-access-hint').hidden=data.enabled;
-  $('#task-cancel').hidden=!task||!['queued','dispatching','running','cancelling','needs_input'].includes(task.status);
-  $('#task-cancel').disabled=!data.enabled||task?.status==='cancelling';
-  $('#task-status').textContent=task?`${task.agent} · ${taskTime(task.run_at)} · ${taskLabels[task.status]||task.status}`:'未安排；填写后点击确定才会交给 Agent。';
-  if(task?.status==='completed'&&task.kind==='reminder')$('#task-status').textContent=`${task.agent} · 已处理提醒`;
-  if(task?.result)$('#task-status').textContent+=task.delivered?' · 飞书已发送':' · 飞书发送待确认';
-  $('#task-error').textContent=task?.error||'';
-  $('#task-result').hidden=!task?.result;$('#task-result').textContent=task?.result||'';
+  $('#task-cancel').hidden=!currentTask;
+  $('#task-cancel').disabled=!data.enabled||currentTask?.status==='cancelling';
+  $('#task-status').textContent=currentTask?`${currentTask.agent} · ${taskTime(currentTask.run_at)} · ${taskLabels[currentTask.status]}。可以先填写下一次安排。`:'填写新的安排并确认；此前的进展和结果保留在下方历史中。';
+  renderTaskHistory(data.tasks,pageId);
 }
 $('#task-form').onsubmit=async e=>{
-  e.preventDefault();const page=current;e.submitter.disabled=true;$('#task-error').textContent='';
+  e.preventDefault();if(taskSubmitting)return;const page=current;taskSubmitting=true;e.submitter.disabled=true;$('#task-error').textContent='';
   const value=$('#task-time').value;
-  try{await api('pages/'+page.id+'/tasks','POST',{page_revision:page.revision,agent:$('#task-agent').value,run_at:value?value+':00+08:00':null,instructions:$('#task-instructions').value.trim()});await refreshTasks(page.id);toast('整份任务已确认提交');}
-  catch(e){$('#task-error').textContent=e.message;e.submitter.disabled=false;}
+  try{
+    await api('pages/'+page.id+'/tasks','POST',{page_revision:page.revision,agent:$('#task-agent').value,run_at:value?value+':00+08:00':null,instructions:$('#task-instructions').value.trim()});
+    if(current?.id===page.id)clearTaskDraft();
+    toast('已提交，进展已记入历史');
+  }catch(error){if(current?.id===page.id)$('#task-error').textContent=error.message;}
+  finally{taskSubmitting=false;await refreshTasks(page.id).catch(error=>toast(error.message));}
 };
 $('#task-cancel').onclick=async e=>{
   const task=currentTask;if(!task)return;e.target.disabled=true;
