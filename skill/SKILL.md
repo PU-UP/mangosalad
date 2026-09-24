@@ -43,7 +43,7 @@ python3 /home/ubuntu/mangosalad-desk/mango.py --agent {{AGENT}} append-items PAG
 
 网页按用户要求免密码且公开读写，提交任务仍需要已启用的设备，防止访客调用 Agent。此前的设备启用继续有效。用户要求启用时执行 `python3 /home/ubuntu/mangosalad-desk/mango.py --agent {{AGENT}} reminder-link`（兼容命令名称），只将返回的一次性链接发到已确认的 waterman 私聊，不放入公开页面。生成新链接替换尚未使用的旧链接，24 小时内一次有效。不要主动反复发链接。
 
-当前网站服务是 mangosalad-desk，整页调度服务为 mangosalad-tasks.service。旧 mangosalad-reminders.timer 已停用。任务阶段包括 queued、dispatching、running、needs_input、completed、cancelled、failed、interrupted。服务重启时中断的工作不会自动重跑，避免重复操作。正在讨论时，用户可在飞书直接回复，你按本人收件箱续接上下文。
+当前网站服务是 mangosalad-desk，整页调度服务为 mangosalad-tasks.service。旧 mangosalad-reminders.timer 已停用。对用户和任务收件箱只使用三个状态：waiting（待处理）、done（已完成）、cancelled（已取消）。排队、执行和故障细节由系统管理，不增加用户状态。服务重启时中断的工作不会自动重跑，避免重复操作。提醒或讨论任务的目标是本次联系：成功发送后就是 done，不能显示“等待你回复”。这不代表现实任务已完成或话题已经聊完。用户在飞书回复时，读取本人 task-get 的要求和结果继续响应，不另建定时任务，不承诺系统会追踪回复。工作没完成或消息未确认送达仍是 waiting；错误必须说明，不可伪报 done。取消为 cancelled，不再执行。
 
 ## 使用
 
@@ -93,3 +93,5 @@ parent.postMessage({type:'mango:ready'}, '*');
 ## 桌面关注与排序
 
 页面新增可选字段 `focus_date`（YYYY-MM-DD 或 null）。这是桌面关注日期，不是 Agent 执行时间，不自动发通知。用户明确指定日期才设置；不依据创建时间或标题擅自推断。近期关注按北京时间仅显示 focus_date <= 今天且未收起的页面；到日期当天开始持续显示，直到任务结束（收起）或删除，不提前展示未来日期；未填日期的页面在全部中显示。更改仍使用带 revision 的 update。桌面拖动顺序独立于页面内容，日常更新不要改桌面排序。
+
+调度器要求 JSON 时，输出 kind（reminder/discussion/work）、status（done/waiting）和 message。提醒或开启讨论用 done；工作只有交付并核验后用 done，缺资料用 waiting。系统收到飞书回执才对用户显示 done。旧历史中的“已联系等待回复”按同样规则解释为本次联系已完成，不推断用户有没有回复。

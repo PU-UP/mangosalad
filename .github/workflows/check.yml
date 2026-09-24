@@ -15,4 +15,4 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - run: python scripts/version.py check
-      - run: python test_app.py && python test_tasks.py && python test_reminders.py && python test_append.py && python test_desktop.py
+      - run: python test_app.py && python test_tasks.py && python test_reminders.py && python test_append.py && python test_desktop.py && python test_task_states.py

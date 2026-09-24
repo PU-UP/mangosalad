@@ -13,6 +13,18 @@ def cancel_page(c, page_id):
     c.execute("UPDATE tasks SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancelling' END, revision=revision+1,updated=? WHERE page_id=? AND status IN ('queued','dispatching','running')",(now,page_id))
 
 
+def task_state(row):
+    if row['status']=='cancelled':return 'cancelled'
+    delivered=bool(row['receipt'])
+    if delivered and not row['error'] and (row['status']=='completed' or row['status']=='needs_input' and row['kind'] in ('reminder','discussion')):
+        return 'done'
+    return 'waiting'
+
+
+def can_cancel(row):
+    return task_state(row)=='waiting' and (row['status'] in ACTIVE+('failed','interrupted') or bool(row['receipt'] or row['error']))
+
+
 def install(app,db,actor,owner,enabled):
     with db() as c:
         c.executescript('''
@@ -27,7 +39,9 @@ def install(app,db,actor,owner,enabled):
         ''')
 
     def public(row):
-        d=dict(row);d['delivered']=bool(d.get('receipt'));d.pop('snapshot',None);d.pop('receipt',None)
+        d=dict(row);d['status']=task_state(row);d['active']=row['status'] in ACTIVE
+        d['can_cancel']=can_cancel(row)
+        d['delivered']=bool(d.get('receipt'));d.pop('snapshot',None);d.pop('receipt',None)
         return d
 
     @app.get('/api/pages/<page_id>/tasks')
@@ -63,7 +77,7 @@ def install(app,db,actor,owner,enabled):
             if len(json.dumps(snapshot,ensure_ascii=False).encode())>60000:abort(400,'页面内容过大，请简化后再交给 Agent。')
             tid=secrets.token_hex(16)
             c.execute('INSERT INTO tasks (id,page_id,agent,run_at,instructions,snapshot,status,created,updated) VALUES (?,?,?,?,?,?,\'queued\',?,?)',(tid,page_id,b['agent'],due,note.strip(),json.dumps(snapshot,ensure_ascii=False),now,now))
-        return {'id':tid,'status':'queued'},201
+        return {'id':tid,'status':'waiting'},201
 
     @app.delete('/api/tasks/<tid>')
     def cancel_task(tid):
@@ -74,10 +88,10 @@ def install(app,db,actor,owner,enabled):
             r=c.execute('SELECT * FROM tasks WHERE id=?',(tid,)).fetchone()
             if not r:abort(404)
             if r['revision']!=b['revision']:abort(409,'任务状态刚变化，请刷新后重试。')
-            if r['status'] not in ACTIVE+('needs_input',):abort(409,'这次任务已结束。')
-            status='cancelled' if r['status'] in ('queued','needs_input') else 'cancelling'
+            if not can_cancel(r):abort(409,'这次任务已结束或正在确认发送，请刷新后重试。')
+            status='cancelling' if r['status'] in ('dispatching','running','cancelling') else 'cancelled'
             c.execute('UPDATE tasks SET status=?,revision=revision+1,updated=? WHERE id=?',(status,time.time(),tid))
-        return {'status':status}
+        return {'status':'cancelled' if status=='cancelled' else 'waiting'}
 
     @app.get('/api/tasks')
     def agent_tasks():
@@ -101,7 +115,7 @@ def install(app,db,actor,owner,enabled):
             c.execute('BEGIN IMMEDIATE')
             r=c.execute('SELECT * FROM tasks WHERE id=? AND agent=?',(tid,name)).fetchone()
             if not r:abort(404)
-            if r['status']=='running':return {'status':'running'}
+            if r['status']=='running':return {'status':'waiting'}
             if r['status']!='dispatching':abort(409,'任务已取消或不在接单阶段，请停止处理。')
             c.execute("UPDATE tasks SET status='running',acknowledged=?,revision=revision+1,updated=? WHERE id=?",(time.time(),time.time(),tid))
-        return {'status':'running'}
+        return {'status':'waiting'}

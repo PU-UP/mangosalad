@@ -32,19 +32,19 @@ with tempfile.TemporaryDirectory() as tmp:
     tid=a.post(tp,headers=h,json=b).json['id']
     job=claim();assert job['id']==tid and claim() is None
     assert anon.post('/api/tasks/'+tid+'/ack',headers=ol,json={}).status_code==404
-    assert anon.post('/api/tasks/'+tid+'/ack',headers=ly,json={}).json['status']=='running'
+    assert anon.post('/api/tasks/'+tid+'/ack',headers=ly,json={}).json['status']=='waiting'
     snapshot=anon.get('/api/tasks/'+tid,headers=ly).json['snapshot']
     assert len(snapshot['state']['items'])==2
     # Edits after confirmation do not silently change the assigned instructions.
     assert a.patch(path,headers=h,json={'revision':1,'title':'changed'}).status_code==200
     assert anon.get('/api/tasks/'+tid,headers=ly).json['snapshot']['title']=='整份任务'
     r=a.get(tp).json['tasks'][0]
-    assert a.delete('/api/tasks/'+tid,headers=h,json={'revision':r['revision']}).json['status']=='cancelling'
+    assert a.delete('/api/tasks/'+tid,headers=h,json={'revision':r['revision']}).json['status']=='waiting'
     assert anon.post('/api/tasks/'+tid+'/ack',headers=ly,json={}).status_code==409
     assert finish(tid,'completed','must not publish') is False
     assert a.get(tp).json['tasks'][0]['status']=='cancelled'
     tid=a.post(tp,headers=h,json=b|{'page_revision':2}).json['id'];claim();recover()
-    assert a.get(tp).json['tasks'][0]['status']=='interrupted' and claim() is None
+    assert a.get(tp).json['tasks'][0]['status']=='waiting' and claim() is None
     tid=a.post(tp,headers=h,json=b|{'page_revision':2}).json['id']
     a.patch(path,headers=h,json={'revision':2,'archived':True})
     assert a.get(tp).json['tasks'][0]['status']=='cancelled'

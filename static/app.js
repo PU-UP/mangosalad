@@ -172,12 +172,12 @@ window.addEventListener('message',async event=>{
   }
 });
 boot();
-let currentTask=null,taskPageId=null,taskSubmitting=false,historySignature='';
-const taskLabels={queued:'等待指定时间',dispatching:'正在联系 Agent',running:'Agent 已接单，处理中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',needs_input:'已联系，等待你回复',failed:'未完成',interrupted:'处理被中断'};
+let currentTask=null,taskPageId=null,taskSubmitting=false,historySignature='',taskHistoryEnabled=false;
+const taskLabels={waiting:'待处理',done:'已完成',cancelled:'已取消'};
 function taskTime(ts){return new Date(ts*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});}
 function clearTaskDraft(){$('#task-form').reset();$('#task-error').textContent='';}
 function renderTaskHistory(tasks,pageId){
-  const signature=pageId+JSON.stringify(tasks);if(signature===historySignature)return;
+  const signature=pageId+taskHistoryEnabled+JSON.stringify(tasks);if(signature===historySignature)return;
   const opened=new Set([...document.querySelectorAll('#task-history-list details[open]')].map(x=>x.dataset.taskId));
   historySignature=signature;const list=$('#task-history-list');list.replaceChildren();
   if(!tasks.length){list.append(el('p','muted','还没有安排。提交后会在这里保留进展和结果。'));return;}
@@ -188,10 +188,15 @@ function renderTaskHistory(tasks,pageId){
     body.append(el('p','task-request',task.instructions||'按当时确认的整页内容处理。'));
     const steps=el('ul','task-timeline');steps.append(el('li','',`${taskTime(task.created)} · 已确认提交`));
     if(task.acknowledged)steps.append(el('li','',`${taskTime(task.acknowledged)} · Agent 已接单`));
-    if(!['queued','dispatching','running'].includes(task.status))steps.append(el('li','',`${taskTime(task.updated)} · ${taskLabels[task.status]||task.status}`));
+    if(task.status!=='waiting')steps.append(el('li','',`${taskTime(task.updated)} · ${taskLabels[task.status]||task.status}`));
     body.append(steps);
     if(task.result){body.append(el('div','task-result',task.result));body.append(el('p','muted',task.delivered?'飞书已发送':'飞书发送待确认'));}
     if(task.error)body.append(el('p','error',task.error));
+    if(task.status==='done'&&['reminder','discussion'].includes(task.kind))body.append(el('p','muted','本次联系已完成；后续在飞书继续交流，不追踪回复状态。'));
+    if(task.status==='waiting'&&!task.active){
+      body.append(el('p','muted','本次尚未完成；可核对结果后重新安排，或取消此记录。'));
+      if(task.can_cancel){const cancel=el('button','quiet danger','取消这次安排');cancel.type='button';cancel.disabled=!taskHistoryEnabled;cancel.onclick=async()=>{cancel.disabled=true;try{await api('tasks/'+task.id,'DELETE',{revision:task.revision});await refreshTasks(pageId);}catch(e){toast(e.message);cancel.disabled=false;}};body.append(cancel);}
+    }
     record.append(body);list.append(record);
   }
 }
@@ -199,13 +204,14 @@ async function refreshTasks(pageId){
   const data=await api('pages/'+pageId+'/tasks');if(current?.id!==pageId)return;
   if(taskPageId!==pageId){clearTaskDraft();historySignature='';}
   taskPageId=pageId;
-  currentTask=data.tasks.find(t=>['queued','dispatching','running','cancelling'].includes(t.status))||null;
+  taskHistoryEnabled=data.enabled;
+  currentTask=data.tasks.find(t=>t.active)||null;
   for(const id of ['task-agent','task-time','task-instructions'])$('#'+id).disabled=!!current.archived||taskSubmitting;
   $('#task-submit').disabled=!!currentTask||!data.enabled||!!current.archived||taskSubmitting;
   $('#task-submit').textContent=currentTask?'当前安排结束或取消后可提交':'确定交给 Agent';
   $('#task-access-hint').hidden=data.enabled;
   $('#task-cancel').hidden=!currentTask;
-  $('#task-cancel').disabled=!data.enabled||currentTask?.status==='cancelling';
+  $('#task-cancel').disabled=!data.enabled;
   $('#task-status').textContent=currentTask?`${currentTask.agent} · ${taskTime(currentTask.run_at)} · ${taskLabels[currentTask.status]}。可以先填写下一次安排。`:'填写新的安排并确认；此前的进展和结果保留在下方历史中。';
   renderTaskHistory(data.tasks,pageId);
 }
