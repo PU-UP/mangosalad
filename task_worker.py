@@ -168,9 +168,20 @@ if __name__=='__main__':
     if len(sys.argv)>1 and sys.argv[1]=='stop':
         with db() as c:rows=c.execute("SELECT id FROM tasks WHERE agent='olive' AND status IN ('dispatching','running','cancelling')").fetchall()
         for row in rows:abort_olive(row['id'])
+        from invest_worker import recover as invest_recover
+        invest_recover(db)
         raise SystemExit(0)
-    os.umask(0o077);recover()
+    from invest_worker import tick as invest_tick, recover as invest_recover
+    os.umask(0o077);recover();invest_recover(db)
     while True:
+        try:
+            if invest_tick(db,send):continue
+        except Exception:
+            # An investment failure must not stop other page assignments.
+            from investment import append, now
+            with db() as c:
+                c.execute('UPDATE invest_control SET enabled=0')
+                append(c,'worker-error:'+str(time.time_ns()),'error',now().date().isoformat(),{'reason':'投资处理异常，已暂停；其他任务继续'})
         task=claim()
         if task:
             try:run_task(task)

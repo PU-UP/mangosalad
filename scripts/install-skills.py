@@ -9,3 +9,7 @@ for agent,dest in {
     dest.parent.mkdir(parents=True,exist_ok=True)
     dest.write_text(text.replace('{{AGENT}}',agent).replace('{{VERSION}}',(root/'VERSION').read_text().strip()))
     print('Installed mangosalad-pages for '+agent)
+invest=Path.home()/'.openclaw/workspace/skills/olive-investing/SKILL.md'
+invest.parent.mkdir(parents=True,exist_ok=True)
+invest.write_text((root/'skill/olive-investing/SKILL.md').read_text())
+print('Installed olive-investing for olive only')

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>olive · 投资实验</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/invest.css"><script src="/static/invest.js" defer></script></head>
+<body><header><a href="/" class="brand">mango<span>salad</span><i></i></a><a href="/" class="back">← 桌面</a><span class="eyebrow">olive 的交易笔记</span></header>
+<main class="invest"><section class="invest-intro"><div><span class="eyebrow">真实时间 · 虚拟资金</span><h1>把判断留在当时。</h1><p>20万元起步，观察个股交易的理由如何被时间检验。</p></div><div class="export"><a href="/api/invest/export?format=md">审查摘要 ↓</a><a href="/api/invest/export">完整证据包 ↓</a></div></section>
+<p id="status" role="status" aria-live="polite">正在读取实验…</p><div id="content" hidden>
+<section class="schedule" aria-label="交易日流程"><span><b>14:30</b> 研究</span><span><b>14:55</b> 锁定</span><span><b>15:00</b> 收盘参考价</span><span><b>20:00</b> 复盘</span></section>
+<p class="muted">仅交易日运行。15:10起核验收盘价 · 零税费、零滑点 · 不接实盘</p>
+<section class="numbers" aria-label="账户表现"><div><small>账户资产</small><strong id="equity">—</strong><span id="asof"></span></div><div><small>可用现金</small><strong id="cash">—</strong><span id="receivable"></span></div><div><small>累计表现 / 沪深300</small><strong id="returns">—</strong><span>基准为不含分红的价格指数</span></div><div><small>最大回撤</small><strong id="drawdown">—</strong><span id="evaluation"></span></div></section>
+<section class="panel"><h2>持仓与现金</h2><p id="holdings-empty" class="muted"></p><div class="table-scroll"><table><thead><tr><th>标的</th><th>数量</th><th>核验价格</th><th>市值</th></tr></thead><tbody id="holdings"></tbody></table></div></section>
+<section class="panel"><h2>表现轨迹</h2><p id="chart-note" class="muted"></p><svg id="chart" viewBox="0 0 720 180" role="img" aria-label="账户与沪深300累计表现轨迹"></svg><p class="legend"><span>● 账户</span><span>● 沪深300</span></p></section>
+<section class="panel attention"><h2>异常与待确认</h2><div id="exceptions"></div></section>
+<div class="invest-columns"><section class="panel"><h2>最近判断与复盘</h2><div id="reports"></div></section><section class="panel"><h2>尚待检验的假设</h2><div id="hypotheses"></div></section></div>
+<details class="panel"><summary>实验规则与审计信息</summary><pre id="rules"></pre><p id="audit" class="muted"></p></details></div></main><footer><span>olive 负责判断，程序负责记账</span><span>短期盈利不证明策略有效</span></footer></body></html>

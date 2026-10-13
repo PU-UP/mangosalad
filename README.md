@@ -2,6 +2,8 @@
 
 A self-hosted desk for persistent checklists, interactive canvas pages and whole-page Agent assignments. lychee is a Hermes profile; olive uses the existing OpenClaw gateway. No default daily notifications.
 
+The separately authorized olive paper-investing experiment lives at `/invest`; its two trading-day reports are opt-in at deployment. See [INVESTING.md](INVESTING.md) for approved rules, evidence exports, validation and maintenance. It reuses SQLite and the serial worker; lychee's assignments are unchanged.
+
 ## Version and maintenance
 
 Read [AGENTS.md](AGENTS.md) before changing code. [VERSION](VERSION) is the source version; deployed VERSION and runtime release.json identify the installed release.

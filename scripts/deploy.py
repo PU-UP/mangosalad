@@ -10,6 +10,8 @@ run('python3','scripts/version.py','check')
 with sqlite3.connect(data/'mango.sqlite') as db:
     if db.execute("SELECT 1 FROM tasks WHERE status IN ('running','dispatching','cancelling') LIMIT 1").fetchone():
         raise SystemExit('An Agent task is active; deploy after it finishes')
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='invest_runs'").fetchone() and db.execute("SELECT 1 FROM invest_runs WHERE status='running' LIMIT 1").fetchone():
+        raise SystemExit('Olive investment research is active; deploy after it finishes')
 run('systemctl','--user','stop','mangosalad-tasks','mangosalad-desk')
 try:
     for name in run('git','ls-files').splitlines():

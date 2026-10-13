@@ -10,6 +10,7 @@ from reminders import install as install_reminders, reconcile
 from tasks import install as install_tasks, cancel_page
 from datetime import timedelta, date, datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager
 
 from flask import Flask, abort, jsonify, request, session, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -30,10 +31,14 @@ app.config.update(SECRET_KEY=private['secret'], MAX_CONTENT_LENGTH=2*1024*1024,
                   SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
                   PERMANENT_SESSION_LIFETIME=timedelta(days=30))
 
+@contextmanager
 def db():
     c = sqlite3.connect(DATA / 'mango.sqlite', timeout=10)
     c.row_factory = sqlite3.Row
-    return c
+    try:
+        with c: yield c
+    finally:
+        c.close()
 
 with db() as c:
     c.executescript('''
@@ -307,6 +312,8 @@ def delete(page_id):
 
 task_owner, task_enabled = install_reminders(app, db, actor, setting, save_setting)
 install_tasks(app, db, actor, task_owner, task_enabled)
+from investment import install as install_investment
+install_investment(app, db, actor, task_enabled)
 
 if __name__ == '__main__':
     import sys
