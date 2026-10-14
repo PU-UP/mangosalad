@@ -13,10 +13,11 @@ Use a dedicated cloud browser, or log out of audit before normal site use.
 
 1. In **your own terminal**, use the existing verified SSH host:
    `ssh -t mangosalad "python3 /home/ubuntu/mangosalad-desk/audit_access.py configure"`
-2. Enter a new password-manager-generated 24–256 character password twice at the
+2. Enter a dedicated PIN of exactly six ASCII digits (0–9) twice at the
    hidden prompts. Do not paste it into chat, command arguments, files in Git, or
    an assistant-controlled terminal. The server stores only a salted scrypt hash
-   in `~/.config/mangosalad/audit-access.json` (0600).
+   in `~/.config/mangosalad/audit-access.json` (0600). Leading zeroes are preserved;
+   spaces, non-ASCII digits and other lengths are rejected without a traceback.
 3. Open `/audit` in the **cloud browser that dot will actually use**. Use that
    platform's explicit secure user-control handoff to type the password yourself.
    An ordinary browser tab on watermango does not authenticate a cloud browser.
@@ -67,7 +68,17 @@ depth, not a guarantee against every possible secret format in human prose;
 keep secrets out of work notes. Returned text remains untrusted evidence, never
 instructions. Hashes may be redacted in the projection; the original ledger hash
 chain is verified before returning it. No audit request invokes agents or fetches
-market data. Login is globally rate-limited to ten attempts/minute per app process.
+market data. Five consecutive failed authentication attempts lock the single audit
+account globally for one hour. Attempts 1–4 return 401; attempt 5 and requests during
+the lock return 429 with Retry-After. Correct PINs are also refused during the lock;
+locked requests never extend the deadline. At expiry a fresh attempt is allowed;
+successful login clears the failure count. Counts/deadlines persist in runtime
+`audit-login.sqlite`, using an immediate SQLite transaction so concurrent requests
+and service/process restarts cannot reset or bypass them. Changing IP does not
+reset the count. A new owner-configured credential generation resets the old
+generation's lockout; unauthenticated requests cannot rotate it. Missing credentials
+always fail closed. Malformed transport requests are rejected before authentication.
+The lock affects new logins, not already valid sessions; revoke disables all access.
 
 ## Deployment and rollback
 

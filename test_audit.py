@@ -10,7 +10,7 @@ from itsdangerous import URLSafeTimedSerializer
 import audit
 from audit_access import configure, load_access
 
-PASSWORD = 'test-fixture-only-unique-password-123456'
+PASSWORD = '012345'  # Isolated fixture only; never installed in production.
 HEADERS = {'X-Mango-Request':'1','Origin':'https://localhost'}
 
 
@@ -101,11 +101,14 @@ with tempfile.TemporaryDirectory() as temp:
     configure(access,PASSWORD);access.chmod(0o644)
     assert load_access(access) is None
     access.chmod(0o600)
-    # Separate Flask app to verify bounded brute-force protection.
+    # Separate Flask instances share the durable account-wide lockout.
     limited=Flask('limited');limited.secret_key='fixture';audit.install(limited,data,home,access)
     attacker=limited.test_client()
-    for i in range(10):assert attacker.post('/api/audit/login',json={'password':PASSWORD+'wrong'},headers=HEADERS).status_code==401
-    assert attacker.post('/api/audit/login',json={'password':PASSWORD},headers=HEADERS).status_code==429
+    for i in range(4):assert attacker.post('/api/audit/login',json={'password':'999999'},headers=HEADERS).status_code==401
+    locked=attacker.post('/api/audit/login',json={'password':'999999'},headers=HEADERS)
+    assert locked.status_code==429 and locked.headers['Retry-After']=='3600'
+    assert client.post('/api/audit/login',json={'password':PASSWORD},headers=HEADERS).status_code==429
+    configure(access,PASSWORD)
 
     # Original app integration: audit identity cannot reuse Agent/device APIs.
     os.environ['MANGO_DATA']=str(home/'integration');os.environ['MANGO_PUBLIC']='1'

@@ -4,7 +4,6 @@ import itertools
 import json
 import re
 import sqlite3
-import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -13,8 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from flask import abort, jsonify, request
 from itsdangerous import BadSignature, URLSafeTimedSerializer
-from werkzeug.security import check_password_hash
-from audit_access import ACCESS, load_access
+from audit_access import ACCESS, load_access, authenticate
 
 COOKIE = '__Host-mango-audit'
 LIFETIME = 12*3600
@@ -83,8 +81,6 @@ def install(app, data, home=None, access_path=None):
     home = home or Path.home()
     access_path = access_path or ACCESS
     serializer = URLSafeTimedSerializer(app.secret_key, salt='mangosalad-readonly-audit-v1')
-    attempts = []
-    lock = threading.Lock()
     mango = data/'mango.sqlite'
     olive = home/'.openclaw/state/openclaw.sqlite'
     lychee = home/'.hermes/profiles/lychee'
@@ -123,20 +119,21 @@ def install(app, data, home=None, access_path=None):
         if request.headers.get('X-Mango-Request')!='1': abort(403)
         if request.args or request.content_length is None or request.content_length>1024: abort(400)
         if request.headers.get('Origin') not in (None,'https://'+request.host): abort(403)
-        with lock:
-            now = time.monotonic()
-            attempts[:] = [t for t in attempts if t>now-60]
-            if len(attempts)>=10: abort(429, 'Wait one minute before retrying')
-            attempts.append(now)
         body = request.get_json(silent=True)
         if not isinstance(body,dict) or set(body)!={'password'}: abort(400)
-        password = body['password']
-        if not isinstance(password,str) or not 24<=len(password)<=256: abort(401, 'Audit login unavailable or password incorrect')
-        config = load_access(access_path)
-        if not config or not check_password_hash(config['password_hash'], password):
+        try:
+            outcome,generation,retry_after=authenticate(access_path,data/'audit-login.sqlite',body['password'])
+        except (OSError,sqlite3.Error):
+            abort(503,'Audit authentication temporarily unavailable')
+        if outcome=='locked':
+            response=jsonify(error='Audit login locked after five failed attempts; try again after the lock expires.',retry_after_seconds=retry_after)
+            response.status_code=429
+            response.headers['Retry-After']=str(retry_after)
+            return response
+        if outcome!='ok':
             abort(401, 'Audit login unavailable or password incorrect')
         response = jsonify({'authenticated':True,'expires_in_seconds':LIFETIME})
-        response.set_cookie(COOKIE, serializer.dumps(config['generation']), max_age=LIFETIME,
+        response.set_cookie(COOKIE, serializer.dumps(generation), max_age=LIFETIME,
                             secure=True, httponly=True, samesite='Strict', path='/')
         return response
 

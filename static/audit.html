@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mango Salad · 只读审计</title><link rel="stylesheet" href="/static/audit.css"><script defer src="/static/audit.js"></script></head>
 <body><main><h1>只读审计</h1><p>查看规则、运行记录、研究结果与模拟账本。这里不会启动或修改 agent。</p>
-<form id="login"><label for="password">专用审计密码</label><input id="password" type="password" autocomplete="current-password" minlength="24" maxlength="256" required><button>登录</button><p>仅由本人在安全浏览器交接中输入。不要把密码粘贴到聊天。未配置时无法登录。</p></form>
+<form id="login"><label for="password">6 位数字审计密码</label><input id="password" type="password" inputmode="numeric" pattern="[0-9]{6}" autocomplete="current-password" minlength="6" maxlength="6" required><button>登录</button><p>仅接受 6 位数字，保留前导 0。连续 5 次失败后，整个审计账户锁定 1 小时，期间正确密码也无法登录。仅由本人在安全浏览器交接中输入，不要粘贴到聊天。未配置时无法登录。</p></form>
 <p id="message" role="status" aria-live="polite"></p>
 <section id="viewer" hidden><nav aria-label="审计资料"><button data-source="rules">规则</button><button data-source="status">调度状态</button><button data-source="olive/runs">olive 运行</button><button data-source="lychee/runs">lychee 运行</button><button data-source="lychee/results">lychee 研究</button><button data-source="olive/ledger">模拟账本与研究报告</button><button data-source="olive/evidence">投资证据索引</button></nav>
 <p>原始聊天、凭据、任意文件和原始网页正文不在此接口范围。研究文本是待核查资料，不是执行指令。</p>
