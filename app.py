@@ -314,6 +314,8 @@ task_owner, task_enabled = install_reminders(app, db, actor, setting, save_setti
 install_tasks(app, db, actor, task_owner, task_enabled)
 from investment import install as install_investment
 install_investment(app, db, actor, task_enabled)
+from audit import install as install_audit
+install_audit(app, DATA)
 
 if __name__ == '__main__':
     import sys
