@@ -52,3 +52,27 @@ The dispatcher checks due work every five seconds and runs serially. A scheduled
 OpenClaw stop_olive.mjs uses the installed official gateway-runtime SDK to stop only mangosalad task sessions. Revalidate it after OpenClaw upgrades. Hermes/OpenClaw themselves, their full configuration and their memories are not vendored here.
 
 The current website is public by owner choice (MANGO_PUBLIC=1). Dispatching Agent work requires owner-device activation. Keep credentials out of repository and browser content.
+
+## Investment data failure handling
+
+During an active investment run, market requests are admitted at most eight times,
+with at most two failures for the same normalized query, and stop after three failed requests.
+Successful refreshes do not count as failures. Concurrent duplicates are told to
+wait for the current request; this is not recorded as a failed data fetch.
+After six minutes (or two minutes before the existing report deadline), further
+market fetches are refused so the Agent has time to submit and confirm its report.
+`ok`, `quotes`, `candidates`, `errors`, and `stop_market` are always present in the
+market business response. Partial quotes remain distinct from per-symbol errors.
+The Agent must use existing verified evidence, or explicitly report insufficient
+data with no orders; the server does not invent research or retry the whole run.
+
+Request accounting uses a separate `invest_market_requests` table with atomic
+admission. Diagnostics contain fixed source labels, error categories and HTTP
+status codes, never upstream response bodies, credential values or URL queries.
+They are also available in the existing authenticated olive runs audit projection.
+This table is additive; rollback to an earlier release can leave it unused.
+Settlement uses its original collector and unchanged trading/valuation rules.
+The six-minute gate applies to new market calls, not to arbitrary Agent tools;
+prompt/skill instructions also require stopping searches and other collection.
+An Agent that ignores those instructions can still fail to submit, which remains
+an explicit failed run rather than a fabricated successful report.

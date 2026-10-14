@@ -8,6 +8,12 @@ from pathlib import Path
 from investment import now, dump, trading_day, append, events, replay, settle, summary, RULES
 
 
+class InvestmentRunError(Exception):
+    def __init__(self, category):
+        self.category=category
+        super().__init__(category)
+
+
 def abort_run(run_id):
     try:
         p=subprocess.run(['node',str(Path(__file__).with_name('stop_olive.mjs')),run_id],capture_output=True,text=True,timeout=25)
@@ -40,6 +46,9 @@ def prompt(run,db):
 用行情接口检查持仓，再从候选发现接口与自由搜索发现机会；至少检查公告、相关新闻和反证。
 收盘价由程序用腾讯与东方财富交叉核验，任何不一致就不成交。你不可自行设定成交价、余额、成交状态。
 数据不足仍要提交解释充分的无订单报告。最多重点研究5个新候选，已有持仓不能遗漏；不追求凑交易次数。
+先预留提交预算：本轮开始6分钟后停止所有新行情/搜索/证据抓取，最迟6分30秒开始提交；8分钟是整个运行上限，不是检索预算。
+market始终返回ok、quotes、candidates、errors、stop_market。先检查ok/errors，不把错误响应当行情；同一查询最多失败两次（失败后仅一次重试），成功刷新不计入失败；每轮最多8次market，累计3次失败即短路。stop_market=true时立即停止行情调用，不换参数绕过限制。request_in_progress只表示已有请求尚未结束，等该请求返回，不算数据失败。
+数据不足时如实说明失败分类和无法核验之处；facts/judgments/orders/reviews允许为空，不为填字段编造研究。使用已有完整JSON模板提交orders=[]的报告并检查record_id；报告提交失败只纠正明确的格式错误，不重做研究、不补过期订单。
 通过 python3 /home/ubuntu/mangosalad-desk/invest_cli.py report --file /tmp/你自己的文件.json 提交完整JSON报告并确认返回record_id。
 本次研究提交窗口14:30至14:55前，复盘窗口20:00至21:00前；单次运行最多8分钟。若错过时间，停止并说明。
 每个原判断要复核，到期不得顺延。本交易日是否需要周度总结：{weekly}。若为true，晚间summary必须附账户与基准、回撤及本周判断复核，区分数据/执行/判断问题。
@@ -54,9 +63,12 @@ def invoke(message,run_id,timeout=480):
             'idempotencyKey':run_id,'deliver':False,'disableMessageTool':True,'timeout':timeout}
     command=[str(Path.home()/'.npm-global/bin/openclaw'),'gateway','call','agent','--params',dump(params),
              '--expect-final','--timeout',str((timeout+20)*1000),'--json']
-    result=subprocess.run(command,cwd=Path.home()/'.openclaw/workspace',capture_output=True,text=True,timeout=timeout+40)
-    if result.returncode:raise RuntimeError('OpenClaw调用失败')
-    data=json.loads(result.stdout);texts=[]
+    try:result=subprocess.run(command,cwd=Path.home()/'.openclaw/workspace',capture_output=True,text=True,timeout=timeout+40)
+    except subprocess.TimeoutExpired:raise InvestmentRunError('agent_timeout') from None
+    if result.returncode:raise InvestmentRunError('gateway_call_failed')
+    try:data=json.loads(result.stdout)
+    except (ValueError,TypeError):raise InvestmentRunError('gateway_response_invalid') from None
+    texts=[]
     def walk(x):
         if isinstance(x,dict):
             if isinstance(x.get('text'),str):texts.append(x['text'])
@@ -65,7 +77,10 @@ def invoke(message,run_id,timeout=480):
         elif isinstance(x,list):
             for v in x:walk(v)
     walk(data)
-    return '\n'.join(texts)
+    text='\n'.join(texts)
+    if 'Request timed out before a response was generated.' in text:
+        raise InvestmentRunError('agent_timeout')
+    return text
 
 
 def notify(db,day,stage,message,deliver):
@@ -127,9 +142,10 @@ def tick(db,deliver):
         invoke(prompt({'id':rid,'day':day,'stage':stage},db),rid)
         with db() as c:
             report=c.execute('SELECT payload FROM invest_events WHERE event_key=?',(stage+':'+day,)).fetchone()
-        if not report:raise ValueError('olive未提交有效报告')
+        if not report:raise InvestmentRunError('report_missing')
     except Exception as e:
-        error=type(e).__name__+'：执行/提交未完成，不自动重跑'
+        category=e.category if isinstance(e,InvestmentRunError) else 'execution_error'
+        error=category+'：执行/提交未完成，不自动重跑'
         if not abort_run(rid):
             with db() as c:c.execute('UPDATE invest_control SET enabled=0')
             error+='；未确认停止，已暂停实验'

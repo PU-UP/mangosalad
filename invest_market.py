@@ -5,14 +5,107 @@ import ipaddress
 import json
 import re
 import socket
+import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
-from datetime import datetime
+from datetime import datetime, timedelta
 from investment import TZ, now, dump, fen, evidence, append, symbol_ok
 
 ALLOWED = ('sse.com.cn','szse.cn','cninfo.com.cn','eastmoney.com','gtimg.cn',
            'news.cn','xinhuanet.com','pbc.gov.cn','stats.gov.cn','csrc.gov.cn','gov.cn',
            'cs.com.cn','stcn.com','cnstock.com')
+
+MAX_REQUESTS = 8
+MAX_FAILURES = 3
+MAX_QUERY_FAILURES = 2
+FETCH_SECONDS = 360  # Keep the final two minutes of the existing eight-minute run for submission.
+
+
+class MarketDataError(Exception):
+    def __init__(self, diagnostic):
+        self.diagnostic=diagnostic
+        super().__init__(diagnostic['category'])
+
+
+def diagnostic(error, source='market_data'):
+    if isinstance(error,MarketDataError):return dict(error.diagnostic)
+    result={'source':source}
+    if isinstance(error,urllib.error.HTTPError):
+        result.update(category='upstream_http',http_status=int(error.code))
+    elif isinstance(error,(TimeoutError,socket.timeout)) or isinstance(error,urllib.error.URLError) and isinstance(error.reason,TimeoutError):
+        result['category']='upstream_timeout'
+    elif isinstance(error,(urllib.error.URLError,OSError)):
+        result['category']='upstream_network'
+    elif isinstance(error,(ValueError,KeyError,TypeError,IndexError)):
+        result['category']='invalid_market_data'
+    else:result['category']='unexpected_market_error'
+    return result
+
+
+def source_fetch(url, encoding, source):
+    try:return fetch(url,encoding)
+    except Exception as error:raise MarketDataError(diagnostic(error,source)) from None
+
+
+def budget_reason(run, records, query, stamp):
+    deadline=datetime.fromisoformat(run['started'])+timedelta(seconds=FETCH_SECONDS)
+    end=stamp.replace(hour=14,minute=55,second=0,microsecond=0) if run['stage']=='research' else stamp.replace(hour=21,minute=0,second=0,microsecond=0)
+    if stamp>=min(deadline,end-timedelta(seconds=120)):return 'submission_time_reserved'
+    if len(records)>=MAX_REQUESTS:return 'request_budget_exhausted'
+    if sum(r['ok']==0 for r in records)>=MAX_FAILURES:return 'failure_budget_exhausted'
+    if any(r['finished'] is None for r in records):return 'request_in_progress'
+    if sum(r['query']==query and r['ok']==0 for r in records)>=MAX_QUERY_FAILURES:return 'query_attempts_exhausted'
+    return None
+
+
+def market_request(db, symbols):
+    result={'ok':False,'quotes':[],'candidates':[],'errors':[],'stop_market':False,
+            'next_action':'Read ok/errors before quotes; never infer a quote from an error.'}
+    values=symbols.split(',') if symbols else []
+    if len(values)>3 or any(not (symbol_ok(x) or x=='sh000300') for x in values):
+        result.update(errors=[{'category':'invalid_symbols'}],stop_market=True,
+                      next_action='Fix the symbols; no network request was made.')
+        return result
+    query=','.join(sorted(set(values))) or 'discover'
+    stamp=now();request_id=None;run=None
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute("SELECT * FROM invest_runs WHERE status='running' AND day=? ORDER BY started DESC LIMIT 1",(stamp.date().isoformat(),)).fetchone()
+        if row:
+            run=dict(row)
+            records=[dict(r) for r in c.execute('SELECT query,finished,ok FROM invest_market_requests WHERE run_id=? ORDER BY id',(run['id'],))]
+            reason=budget_reason(run,records,query,stamp)
+            if reason:
+                result.update(errors=[{'category':reason}],stop_market=reason!='request_in_progress',
+                              next_action='Stop market calls and submit using already verified evidence. If evidence is insufficient, submit a truthful report with orders=[]; do not invent facts or judgments. Confirm record_id before the existing deadline.')
+                if reason=='request_in_progress':result['next_action']='Wait for the already-running request to finish; do not start duplicate calls or count this as a data failure.'
+                return result
+            request_id=c.execute('INSERT INTO invest_market_requests(run_id,query,started) VALUES(?,?,?)',(run['id'],query,stamp.isoformat())).lastrowid
+    if values:
+        # Preserve good snapshots even if another symbol fails; errors are never quotes.
+        def one(symbol):
+            try:return snapshot(db,symbol),None
+            except Exception as error:return None,{'symbol':symbol,**diagnostic(error)}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            for quote,error in pool.map(one,sorted(set(values))):
+                if error:result['errors'].append(error)
+                else:result['quotes'].append(quote)
+    else:
+        try:result.update(discover(db))
+        except Exception as error:result['errors'].append(diagnostic(error))
+    result['ok']=not result['errors']
+    if request_id is not None:
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute('UPDATE invest_market_requests SET finished=?,ok=?,diagnostics=? WHERE id=?',
+                      (now().isoformat(),int(result['ok']),dump(result['errors']),request_id))
+            records=[dict(r) for r in c.execute('SELECT query,finished,ok FROM invest_market_requests WHERE run_id=? ORDER BY id',(run['id'],))]
+            reason=budget_reason(run,records,query,now())
+        if reason in ('submission_time_reserved','request_budget_exhausted','failure_budget_exhausted'):
+            result['stop_market']=True
+    if result['errors'] or result['stop_market']:
+        result['next_action']='Do not repeat a failed query more than once. If stop_market is true, stop fetching and submit using already verified evidence. If data is insufficient, use orders=[] and explain the missing data; confirm record_id. Do not claim completed research.'
+    return result
 
 
 def check_url(url):
@@ -55,7 +148,7 @@ def capture(db,body):
 
 def discover(db):
     url='https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=30&po=1&fid=f6&fs=m:1+t:2,m:0+t:6&fields=f12,f14,f2,f3,f6&invt=2&fltt=2'
-    raw=fetch(url);data=json.loads(raw)['data']['diff'];eid=evidence(db,url,raw)
+    raw=source_fetch(url,'utf-8','eastmoney_candidates');data=json.loads(raw)['data']['diff'];eid=evidence(db,url,raw)
     rows=data.values() if isinstance(data,dict) else data
     candidates=[]
     for r in rows:
@@ -71,7 +164,9 @@ def snapshot(db,symbol):
     urls=[('https://qt.gtimg.cn/q='+symbol,'gb18030'),
           ('https://push2.eastmoney.com/api/qt/stock/get?secid='+secid+'&fields=f57,f58,f43,f60,f44,f45,f46,f47,f51,f52,f86&invt=2&fltt=2','utf-8'),
           ('https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param='+symbol+',day,,,90,','utf-8')]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:raws=list(pool.map(lambda pair:fetch(*pair),urls))
+    sources=('tencent_quote','eastmoney_quote','tencent_history')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        raws=list(pool.map(lambda item:source_fetch(*item[0],item[1]),zip(urls,sources)))
     observed=now()
     t=raws[0].split('"')[1].split('~');e=json.loads(raws[1])['data'];k=json.loads(raws[2])['data'][symbol]
     history=k.get('day',[])

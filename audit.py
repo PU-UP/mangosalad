@@ -195,8 +195,14 @@ def install(app, data, home=None, access_path=None):
             runs = rows(lychee/'cron/executions.db','SELECT status,started_at,finished_at,substr(error,1,4000) AS error,delivery_outcome FROM executions ORDER BY started_at DESC,id DESC LIMIT ? OFFSET ?',(limit,offset))
             extra = rows(lychee/'state.db','SELECT source,started_at,last_activity_at,ended_at,message_count,tool_call_count FROM sessions ORDER BY last_activity_at DESC,id DESC LIMIT ? OFFSET ?',(limit,offset))
         tasks = rows(mango,'SELECT status,created,updated,acknowledged,kind,substr(result,1,4000) AS result,substr(error,1,4000) AS error FROM tasks WHERE agent=? ORDER BY created DESC,id DESC LIMIT ? OFFSET ?',(agent,limit,offset))
-        return response({'offset':offset,'limit':limit,'runs':runs,'investment_runs' if agent=='olive' else 'session_activity':extra,'page_tasks':tasks,
-                         'pagination':'Each stream uses the same offset/limit; stop a stream when fewer than limit rows remain.'})
+        result={'offset':offset,'limit':limit,'runs':runs,'investment_runs' if agent=='olive' else 'session_activity':extra,'page_tasks':tasks,
+                'pagination':'Each stream uses the same offset/limit; stop a stream when fewer than limit rows remain.'}
+        if agent=='olive':
+            with readonly(mango) as c:
+                available=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='invest_market_requests'").fetchone()
+            if available:
+                result['market_requests']=rows(mango,'SELECT r.day,r.stage,m.started,m.finished,m.ok,m.diagnostics FROM invest_market_requests m JOIN invest_runs r ON r.id=m.run_id ORDER BY m.id DESC LIMIT ? OFFSET ?',(limit,offset))
+        return response(result)
 
     @app.get('/api/audit/lychee/results')
     def lychee_results():

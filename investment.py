@@ -57,6 +57,10 @@ def schema(db):
           status TEXT NOT NULL, started TEXT NOT NULL, finished TEXT, error TEXT,
           UNIQUE(day,stage));
         CREATE TABLE IF NOT EXISTS invest_control (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS invest_market_requests (
+          id INTEGER PRIMARY KEY, run_id TEXT NOT NULL, query TEXT NOT NULL,
+          started TEXT NOT NULL, finished TEXT, ok INTEGER, diagnostics TEXT);
+        CREATE INDEX IF NOT EXISTS invest_market_requests_run ON invest_market_requests(run_id,id);
         INSERT OR IGNORE INTO invest_control VALUES(1,0);
         CREATE TRIGGER IF NOT EXISTS invest_no_update BEFORE UPDATE ON invest_events
           BEGIN SELECT RAISE(ABORT,'journal is append-only'); END;
@@ -309,15 +313,8 @@ def install(app,db,actor,owner_enabled):
     @app.get('/api/invest/market')
     def investment_market():
         access(True)
-        from invest_market import snapshot, discover
-        try:
-            symbols=request.args.get('symbols','')
-            if not symbols:return discover(db)
-            values=symbols.split(',')
-            if len(values)>3 or not all(symbol_ok(x) or x=='sh000300' for x in values):raise ValueError('一次最多3个范围内代码')
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=3) as pool:return {'quotes':list(pool.map(lambda x:snapshot(db,x),values))}
-        except (ValueError,KeyError,TypeError,OSError) as e:abort(400,'行情获取未确认：'+type(e).__name__)
+        from invest_market import market_request
+        return market_request(db,request.args.get('symbols',''))
 
     @app.post('/api/invest/evidence')
     def investment_evidence():
