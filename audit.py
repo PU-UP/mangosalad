@@ -161,7 +161,14 @@ def install(app, data, home=None, access_path=None):
     def audit_rules():
         pagination()
         from investment import RULES
-        return response({'investment':RULES,
+        from invest_daily import RULES_DAILY
+        current=RULES;mode_verified=False
+        if mango.is_file():
+            with readonly(mango) as c:
+                if c.execute("SELECT 1 FROM sqlite_master WHERE name='invest_events'").fetchone():
+                    mode_verified=True
+                    if c.execute("SELECT 1 FROM invest_events WHERE event_key='rules:2.0-daily'").fetchone():current=RULES_DAILY
+        return response({'investment':current,'mode_verified':mode_verified,
                          'olive_rules':document(home/'.openclaw/workspace/AGENTS.md'),
                          'olive_identity':document(home/'.openclaw/workspace/IDENTITY.md'),
                          'olive_soul':document(home/'.openclaw/workspace/SOUL.md'),

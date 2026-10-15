@@ -138,4 +138,11 @@ with tempfile.TemporaryDirectory() as temp:
     assert len(ledger.json['data']['events'])==1
     assert normal.get('/api/audit/olive/evidence').status_code==200
     with sqlite3.connect(before) as c:assert c.execute('SELECT count(*) FROM invest_events').fetchone()[0]==count
+    from invest_daily import activate
+    from investment import TZ
+    from datetime import datetime
+    with patch('invest_daily.now',return_value=datetime(2026,10,15,13,tzinfo=TZ)):activate(db)
+    result=normal.get('/api/audit/rules')
+    assert result.status_code==200 and result.json['data']['investment']['version']=='2.0-daily'
+    assert result.json['data']['mode_verified'] is True
 print('Audit security and integration checks passed')

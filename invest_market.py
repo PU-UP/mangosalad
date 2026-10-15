@@ -13,7 +13,7 @@ from investment import TZ, now, dump, fen, evidence, append, symbol_ok
 
 ALLOWED = ('sse.com.cn','szse.cn','cninfo.com.cn','eastmoney.com','gtimg.cn',
            'news.cn','xinhuanet.com','pbc.gov.cn','stats.gov.cn','csrc.gov.cn','gov.cn',
-           'cs.com.cn','stcn.com','cnstock.com')
+           'cs.com.cn','stcn.com','cnstock.com','finance.sina.com.cn')
 
 MAX_REQUESTS = 8
 MAX_FAILURES = 3
@@ -49,7 +49,7 @@ def source_fetch(url, encoding, source):
 
 def budget_reason(run, records, query, stamp):
     deadline=datetime.fromisoformat(run['started'])+timedelta(seconds=FETCH_SECONDS)
-    end=stamp.replace(hour=14,minute=55,second=0,microsecond=0) if run['stage']=='research' else stamp.replace(hour=21,minute=0,second=0,microsecond=0)
+    end=stamp.replace(hour=run.get('deadline_hour',14),minute=55,second=0,microsecond=0) if run['stage']=='research' else stamp.replace(hour=21,minute=0,second=0,microsecond=0)
     if stamp>=min(deadline,end-timedelta(seconds=120)):return 'submission_time_reserved'
     if len(records)>=MAX_REQUESTS:return 'request_budget_exhausted'
     if sum(r['ok']==0 for r in records)>=MAX_FAILURES:return 'failure_budget_exhausted'
@@ -73,6 +73,8 @@ def market_request(db, symbols):
         row=c.execute("SELECT * FROM invest_runs WHERE status='running' AND day=? ORDER BY started DESC LIMIT 1",(stamp.date().isoformat(),)).fetchone()
         if row:
             run=dict(row)
+            from invest_daily import active
+            if active(db):run['deadline_hour']=16
             records=[dict(r) for r in c.execute('SELECT query,finished,ok FROM invest_market_requests WHERE run_id=? ORDER BY id',(run['id'],))]
             reason=budget_reason(run,records,query,stamp)
             if reason:
@@ -148,6 +150,8 @@ def capture(db,body):
 
 
 def discover(db):
+    from invest_daily import active
+    if active(db):return {'candidates':[],'note':'Daily mode has no intraday turnover discovery. Choose candidates from public research within the existing scope; verify each with market --symbols. No fixed pool is imposed.'}
     url='https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=30&po=1&fid=f6&fs=m:1+t:2,m:0+t:6&fields=f12,f14,f2,f3,f6&invt=2&fltt=2'
     raw=source_fetch(url,'utf-8','eastmoney_candidates');data=json.loads(raw)['data']['diff'];eid=evidence(db,url,raw)
     rows=data.values() if isinstance(data,dict) else data
@@ -160,6 +164,8 @@ def discover(db):
 
 
 def snapshot(db,symbol):
+    from invest_daily import active, snapshot as daily_snapshot
+    if active(db):return daily_snapshot(db,symbol)
     if not symbol_ok(symbol) and symbol!='sh000300':raise ValueError('不支持的代码')
     secid=('1.' if symbol.startswith('sh') else '0.')+symbol[2:]
     urls=[('https://qt.gtimg.cn/q='+symbol,'gb18030'),

@@ -146,9 +146,12 @@ def submit(db, body, stamp=None):
     if not isinstance(body, dict) or set(body) != {'run_id','stage','summary','facts','inferences','uncertainties','counterevidence','judgments','orders','next_plan','reviews'}:
         raise ValueError('请使用技能中的完整报告结构，不接受账本余额或自定义时间')
     stage = body['stage']
+    from invest_daily import active, adjacent, RULES_DAILY
+    daily=active(db)
+    schedule=RULES_DAILY if daily else RULES
     if stage not in ('research','review'): raise ValueError('阶段无效')
     if not trading_day(day): raise ValueError('非交易日不接受投资报告')
-    if stage == 'research' and not '14:30' <= hhmm < '14:55': raise ValueError('已错过14:55截止或尚未开始，禁止回填')
+    if stage == 'research' and not schedule['research'] <= hhmm < schedule['deadline']: raise ValueError('Outside research window '+schedule['research']+'-'+schedule['deadline']+'; no backfill')
     if stage == 'review' and not '20:00' <= hhmm < '21:00': raise ValueError('不在晚间复盘时间')
     for key in ('summary','inferences','uncertainties','counterevidence','next_plan'): text_field(body[key], key)
     for key in ('facts','judgments','orders','reviews'):
@@ -191,7 +194,8 @@ def submit(db, body, stamp=None):
             q=json.loads(q[0])
             if q['symbol']!=symbol or not q['eligible'] or q['day']!=day or not q['verified']: raise ValueError('行情或标的资格未核验')
             age=(stamp-datetime.fromisoformat(q['observed_at'])).total_seconds()
-            if not 0<=age<=300: raise ValueError('行情超过5分钟，请重新查询')
+            if daily and (q.get('rules_version')!=RULES_DAILY['version'] or not q.get('final') or q.get('corporate_action')):raise ValueError('Daily quote not verified for this mode')
+            if not 0<=age<=(RULES_DAILY['quote_max_age_seconds'] if daily else 300): raise ValueError('Quote acquisition age exceeds mode limit; fetch again')
         for review in body['reviews']:
             if not isinstance(review,dict) or set(review)!={'report_id','symbol','verdict','reason','evidence_ids'}: raise ValueError('复核结构无效')
             if review['verdict'] not in ('pending','supported','refuted','unverifiable'): raise ValueError('复核结论无效')
@@ -202,22 +206,27 @@ def submit(db, body, stamp=None):
             if review['verdict'] in ('supported','refuted') and not review['evidence_ids']: raise ValueError('判断兑现/失败须引用证据')
             for eid in review['evidence_ids']:
                 if not c.execute('SELECT 1 FROM invest_evidence WHERE id=? AND at<=?',(eid,stamp.isoformat())).fetchone(): raise ValueError('复核证据不存在')
+        if daily:
+            body={**body,'rules_version':RULES_DAILY['version'],'research_day':day,'execution_day':adjacent(day) if stage=='research' else None}
         eid=append(c,stage+':'+day,stage,day,body,stamp.isoformat())
     return {'record_id':eid,'locked':True,'day':day}
 
 
 def settle(db, day, quotes, stamp=None):
     stamp=stamp or now()
-    if stamp.date().isoformat()!=day or stamp.strftime('%H:%M')<'15:10' or not trading_day(day): raise ValueError('只能在当日收盘核验后结算')
+    from invest_daily import active, pending, RULES_DAILY
+    daily=active(db)
+    if stamp.date().isoformat()!=day or stamp.strftime('%H:%M')<(RULES_DAILY['settle'] if daily else RULES['settle']) or not trading_day(day): raise ValueError('只能在当日收盘核验后结算')
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
         if c.execute('SELECT 1 FROM invest_events WHERE event_key=?',('settled:'+day,)).fetchone(): return
         apply_dividends(c,day)
-        reports=[r for r in events(c,'research') if r['day']==day]
+        reports=pending(c,day) if daily else [r for r in events(c,'research') if r['day']==day]
         account=replay(c)
         for index,order in enumerate(reports[0]['payload']['orders'] if reports else []):
             symbol=order['symbol']; q=quotes.get(symbol); reason=None
             if not q or not q.get('verified') or q.get('day')!=day or not q.get('final'): reason='收盘行情无法验证'
+            elif daily and q.get('rules_version')!=RULES_DAILY['version']: reason='Daily mode quote required'
             elif not q['eligible']: reason='标的状态不符合范围'
             elif q['price_fen'] in (q['upper_fen'],q['lower_fen']): reason='收盘触及涨跌停，双向不成交'
             elif q.get('corporate_action'): reason='公司行为或前收盘变化待核实'
@@ -229,9 +238,9 @@ def settle(db, day, quotes, stamp=None):
             key='order:'+day+':'+str(index)
             if reason: append(c,key,'rejected',day,{'order':order,'reason':reason})
             else:
-                append(c,key,'fill',day,{**order,'price_fen':q['price_fen'],'name':q['name'],'evidence_ids':q['evidence_ids'],'fees_fen':0})
+                append(c,key,'fill',day,{**order,'price_fen':q['price_fen'],'name':q['name'],'evidence_ids':q['evidence_ids'],'fees_fen':0,**({'research_day':reports[0]['day'],'execution_day':day,'rules_version':RULES_DAILY['version'],'execution_model':'next-session-close-paper'} if daily else {})})
                 account=replay(c)
-        append(c,'settled:'+day,'settled',day,{'report_id':reports[0]['id'] if reports else None,'note':'无有效截止前判断，不交易' if not reports else '按预先锁定顺序处理'})
+        append(c,'settled:'+day,'settled',day,{'report_id':reports[0]['id'] if reports else None,**({'execution_day':day,'research_day':reports[0]['day'] if reports else None,'rules_version':RULES_DAILY['version']} if daily else {}),'note':'无有效截止前判断，不交易' if not reports else '按预先锁定顺序处理'})
         valuation(c,day,quotes)
 
 
@@ -268,7 +277,8 @@ def summary(db):
                 verdict=resolutions.get((r['id'],j['symbol']),{'verdict':'pending'})
                 due=(date.fromisoformat(r['day'])+timedelta(days=j['horizon_days'])).isoformat()
                 hypotheses.append({'report_id':r['id'],**j,'due':due,'resolution':verdict,'overdue':due<now().date().isoformat() and verdict['verdict']=='pending'})
-        return {'rules':RULES,'enabled':bool(c.execute('SELECT enabled FROM invest_control').fetchone()[0]),'account':account,
+        from invest_daily import rules
+        return {'rules':rules(db),'enabled':bool(c.execute('SELECT enabled FROM invest_control').fetchone()[0]),'account':account,
                 'start':next((r for r in journal if r['kind']=='start'),None),'latest':vals[-1] if vals else None,
                 'history':vals,'max_drawdown':drawdown,'reports':reports[-20:],'hypotheses':hypotheses,
                 'exceptions':[r for r in journal if r['kind'] in ('rejected','error','missed','control','corporate_action')][-30:],

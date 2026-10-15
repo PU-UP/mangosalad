@@ -19,7 +19,7 @@ async function load(){
   for(const e of [...s.exceptions].reverse().slice(0,8))node('p',e.day+' · '+(e.payload.reason||JSON.stringify(e.payload)),$('exceptions'));
   for(const r of [...s.reports].reverse()){
    const d=node('details','',$('reports'));d.className='report';node('summary',r.day+' · '+(r.kind==='research'?'交易判断':'晚间复盘'),d);
-   const p=r.payload;node('p',p.summary,d);
+   const p=r.payload;node('p',p.summary,d);if(p.execution_day)node('p','研究日 '+p.research_day+' · 模拟执行日 '+p.execution_day+' · '+p.rules_version,d);
    for(const [label,key] of [['推断','inferences'],['不确定性','uncertainties'],['反证','counterevidence'],['下一步','next_plan']])node('p',label+'：'+p[key],d);
    for(const f of p.facts){node('p','事实：'+f.text+'（事件日期 '+(f.event_date||'未知')+'）',d);evidence(f.evidence_id,d);}
    for(const j of p.judgments)node('p',j.symbol+' · '+j.action+'\n'+j.reason+'\n失效条件：'+j.falsifier+'\n风险：'+j.risk+'\n仓位理由：'+j.sizing,d);
