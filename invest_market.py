@@ -59,7 +59,7 @@ def budget_reason(run, records, query, stamp):
 
 
 def market_request(db, symbols):
-    result={'ok':False,'quotes':[],'candidates':[],'errors':[],'stop_market':False,
+    result={'ok':False,'partial':False,'quotes':[],'candidates':[],'errors':[],'stop_market':False,
             'next_action':'Read ok/errors before quotes; never infer a quote from an error.'}
     values=symbols.split(',') if symbols else []
     if len(values)>3 or any(not (symbol_ok(x) or x=='sh000300') for x in values):
@@ -93,7 +93,8 @@ def market_request(db, symbols):
     else:
         try:result.update(discover(db))
         except Exception as error:result['errors'].append(diagnostic(error))
-    result['ok']=not result['errors']
+    result['partial']=bool(result['quotes'] and result['errors'])
+    result['ok']=bool(result['quotes']) if values else not result['errors']
     if request_id is not None:
         with db() as c:
             c.execute('BEGIN IMMEDIATE')
@@ -162,14 +163,17 @@ def snapshot(db,symbol):
     if not symbol_ok(symbol) and symbol!='sh000300':raise ValueError('不支持的代码')
     secid=('1.' if symbol.startswith('sh') else '0.')+symbol[2:]
     urls=[('https://qt.gtimg.cn/q='+symbol,'gb18030'),
-          ('https://push2.eastmoney.com/api/qt/stock/get?secid='+secid+'&fields=f57,f58,f43,f60,f44,f45,f46,f47,f51,f52,f86&invt=2&fltt=2','utf-8'),
-          ('https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param='+symbol+',day,,,90,','utf-8')]
-    sources=('tencent_quote','eastmoney_quote','tencent_history')
+          ('https://push2.eastmoney.com/api/qt/stock/get?secid='+secid+'&fields=f57,f58,f43,f60,f44,f45,f46,f47,f51,f52,f86&invt=2&fltt=2','utf-8')]
+    sources=['tencent_quote','eastmoney_quote']
+    # Only equities need listing history for eligibility; the benchmark still requires both price sources.
+    if symbol!='sh000300':
+        urls.append(('https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param='+symbol+',day,,,90,','utf-8'))
+        sources.append('tencent_history')
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         raws=list(pool.map(lambda item:source_fetch(*item[0],item[1]),zip(urls,sources)))
     observed=now()
-    t=raws[0].split('"')[1].split('~');e=json.loads(raws[1])['data'];k=json.loads(raws[2])['data'][symbol]
-    history=k.get('day',[])
+    t=raws[0].split('"')[1].split('~');e=json.loads(raws[1])['data']
+    history=json.loads(raws[2])['data'][symbol].get('day',[]) if symbol!='sh000300' else []
     if t[2]!=symbol[2:] or e['f57']!=symbol[2:]:raise ValueError('行情代码不匹配')
     qt=datetime.strptime(t[30],'%Y%m%d%H%M%S').replace(tzinfo=TZ)
     et=datetime.fromtimestamp(e['f86'],TZ);day=qt.date().isoformat()

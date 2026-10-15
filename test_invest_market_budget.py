@@ -52,7 +52,9 @@ with tempfile.TemporaryDirectory() as folder:
         raise market.MarketDataError(safe)
     with patch('invest_market.now',return_value=stamp),patch('invest_market.snapshot',side_effect=partial):
         data=market.market_request(db,'sh600519,sh600036')
-        assert not data['ok'] and len(data['quotes'])==1 and len(data['errors'])==1
+        assert data['ok'] and data['partial'] and len(data['quotes'])==1 and len(data['errors'])==1
+    with db() as c:
+        assert c.execute('SELECT count(*) FROM invest_market_requests WHERE ok=0').fetchone()[0]==0
     with patch('invest_market.now',return_value=stamp+timedelta(seconds=360)),patch('invest_market.snapshot') as upstream:
         data=market.market_request(db,'sh600519')
         assert data['stop_market'] and data['errors'][0]['category']=='submission_time_reserved'

@@ -48,6 +48,7 @@ def prompt(run,db):
 数据不足仍要提交解释充分的无订单报告。最多重点研究5个新候选，已有持仓不能遗漏；不追求凑交易次数。
 先预留提交预算：本轮开始6分钟后停止所有新行情/搜索/证据抓取，最迟6分30秒开始提交；8分钟是整个运行上限，不是检索预算。
 market始终返回ok、quotes、candidates、errors、stop_market。先检查ok/errors，不把错误响应当行情；同一查询最多失败两次（失败后仅一次重试），成功刷新不计入失败；每轮最多8次market，累计3次失败即短路。stop_market=true时立即停止行情调用，不换参数绕过限制。request_in_progress只表示已有请求尚未结束，等该请求返回，不算数据失败。
+partial=true表示只有部分代码成功；逐条核对quotes中的verified/eligible/day，不能把errors所列代码当作已有行情。候选列表失败时不反复请求同一入口；可用剩余预算核验公开资料，但禁止用单源价格代替双源核验，无法满足证据条件就明确无订单收尾。
 数据不足时如实说明失败分类和无法核验之处；facts/judgments/orders/reviews允许为空，不为填字段编造研究。使用已有完整JSON模板提交orders=[]的报告并检查record_id；报告提交失败只纠正明确的格式错误，不重做研究、不补过期订单。
 通过 python3 /home/ubuntu/mangosalad-desk/invest_cli.py report --file /tmp/你自己的文件.json 提交完整JSON报告并确认返回record_id。
 本次研究提交窗口14:30至14:55前，复盘窗口20:00至21:00前；单次运行最多8分钟。若错过时间，停止并说明。

@@ -63,6 +63,12 @@ After six minutes (or two minutes before the existing report deadline), further
 market fetches are refused so the Agent has time to submit and confirm its report.
 `ok`, `quotes`, `candidates`, `errors`, and `stop_market` are always present in the
 market business response. Partial quotes remain distinct from per-symbol errors.
+For mixed outcomes, `ok=true, partial=true` means at least one snapshot was fetched,
+not that every symbol is verified or eligible. Such a request does not count as a
+total-fetch failure; individual errors remain visible and the total call/time cap
+still applies. The CSI 300 benchmark uses exactly the same two quote sources and
+symbol as before, but does not fetch listing-history data required only for equity
+eligibility. No single-source fallback is allowed if either quote provider fails.
 The Agent must use existing verified evidence, or explicitly report insufficient
 data with no orders; the server does not invent research or retry the whole run.
 
