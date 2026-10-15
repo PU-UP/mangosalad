@@ -43,6 +43,8 @@ def prompt(run,db):
 先读 /home/ubuntu/.openclaw/workspace/skills/olive-investing/SKILL.md。
 run_id={run['id']} stage={run['stage']} research_day={run['day']}，规则={dump(schedule)}。
 16:30研究当天完整日线，16:55前提交并冻结；系统在下一交易日收盘价模拟撮合。20:00只复盘。
+首日无待执行订单只指今日结算：今日研究若证据合格，允许生成下一交易日订单；不是首日禁单。
+禁止自行回填、更换或重设基准起点及历史收益；缺失保持缺失，交维护者处理。不要把不同错误类别推定为同一根因。
 先查账户和待验证判断；候选来自公开研究，不要求固定股票池。market 无参数不再取盘中成交额榜。
 market --symbols 每次至多3只；检查 ok/errors/verified/eligible/day/rules_version。两源缺失、资格未核实不得下单。
 不得将当日日线视作盘中可知信息；不得用次日数据修改已经冻结的数量。价格和成交仅由确定性账本决定。

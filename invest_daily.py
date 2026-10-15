@@ -78,7 +78,7 @@ def parse_bars(rows, source):
 
 
 def snapshot(db,symbol):
-    from invest_market import source_fetch
+    from invest_market import source_fetch, MarketDataError
     if not symbol_ok(symbol) and symbol!='sh000300':raise ValueError('Unsupported symbol')
     observed=now();day=observed.date().isoformat()
     if not trading_day(day) or observed.strftime('%H:%M')<'16:00':raise ValueError('Complete daily data available only after 16:00 on a trading day')
@@ -92,7 +92,11 @@ def snapshot(db,symbol):
     # Ignore decades outside the requested Tencent window, including pre-launch placeholders.
     b=parse_bars([r for r in decode_sina(raws[1],symbol) if r['date'][:10] in a],'sina')
     previous_day=adjacent(day,-1)
-    if any(d not in bars for bars in (a,b) for d in (day,previous_day)):raise ValueError('Missing required complete daily bar')
+    for source,bars in (('tencent_daily',a),('sina_daily',b)):
+        for required in (day,previous_day):
+            if required not in bars:
+                raise MarketDataError({'source':source,'category':'daily_bar_missing','required_day':required,
+                    'latest_day':max((d for d in bars if d<=day),default=None)})
     x,y=a[day],b[day];prev=a[previous_day]['close']
     history_days=[d for d in sorted(a.keys() & b.keys()) if d<=day and a[d]['close']==b[d]['close'] and all(abs(a[d][k]-b[d][k])<=1 for k in ('open','high','low')) and abs(a[d]['volume']-b[d]['volume'])<=100]
     verified=(x['close']==y['close'] and prev==b[previous_day]['close']

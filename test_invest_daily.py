@@ -45,7 +45,10 @@ with tempfile.TemporaryDirectory() as folder:
     assert quote('sz000001')['eligible']
     assert quote('sh000300')['verified'] and not quote('sh000300')['eligible']
     rejects(lambda:quote(when=stamp.replace(hour=14)))
-    rejects(lambda:quote(mutate=lambda a,b:b.pop(5)))
+    try:quote(mutate=lambda a,b:b.pop(5))
+    except market.MarketDataError as e:
+        assert e.diagnostic=={'source':'sina_daily','category':'daily_bar_missing','required_day':'2026-10-15','latest_day':'2026-10-14'}
+    else:raise AssertionError('Missing daily bar accepted')
     assert not quote(mutate=lambda a,b:b[5].update(close='10.01'))['verified']
     assert not quote(mutate=lambda a,b:a['data']['sh600519']['qt']['sh600519'].__setitem__(47,'12'))['eligible']
     assert not quote(mutate=lambda a,b:a['data']['sh600519']['qt']['sh600519'].__setitem__(1,'ST测试'))['eligible']
@@ -93,6 +96,8 @@ with tempfile.TemporaryDirectory() as folder:
     with db() as c:
         assert len(inv.events(c,'fill'))==1 and len(inv.events(c,'rejected'))==1
         assert not daily.pending(c,'2026-10-20')
+    prompt=worker.prompt({'id':'fixture','day':'2026-10-15','stage':'research'},db)
+    assert '不是首日禁单' in prompt and '禁止自行回填' in prompt
     with patch('invest_market.source_fetch') as fetch:
         assert market.discover(db)['candidates']==[]
         fetch.assert_not_called()
