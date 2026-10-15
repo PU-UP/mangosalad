@@ -38,11 +38,12 @@ def prompt(run,db):
         while not trading_day(next_day.isoformat()):next_day+=timedelta(days=1)
         weekly=next_day.isocalendar()[:2]!=date.fromisoformat(run['day']).isocalendar()[:2]
     except ValueError:weekly=True
-    if schedule['version']=='2.0-daily':
+    if schedule['version'] in ('2.0-daily','2.1-ready'):
         return f"""你是 olive，执行用户批准的日线模拟实验。仅模拟，禁止实盘、修改程序/数据库/权限/凭据/调度。
 先读 /home/ubuntu/.openclaw/workspace/skills/olive-investing/SKILL.md。
 run_id={run['id']} stage={run['stage']} research_day={run['day']}，规则={dump(schedule)}。
-16:30研究当天完整日线，16:55前提交并冻结；系统在下一交易日收盘价模拟撮合。20:00只复盘。
+研究当天完整日线，截止时间按规则deadline={schedule['deadline']}；系统在下一交易日收盘价模拟撮合。20:00只复盘。
+2.1-ready模式的数据等待由程序在模型启动前完成，不占8分钟预算；你不得自行等待、重新调度或重做已提交判断。
 首日无待执行订单只指今日结算：今日研究若证据合格，允许生成下一交易日订单；不是首日禁单。
 禁止自行回填、更换或重设基准起点及历史收益；缺失保持缺失，交维护者处理。不要把不同错误类别推定为同一根因。
 先查账户和待验证判断；候选来自公开研究，不要求固定股票池。market 无参数不再取盘中成交额榜。
@@ -139,8 +140,13 @@ def tick(db,deliver):
             account=replay(c);reports=pending(c,day) if daily else [r for r in events(c,'research') if r['day']==day]
         symbols=list(account['positions'])+['sh000300']
         if reports:symbols += [o['symbol'] for o in reports[0]['payload']['orders']]
-        quotes,errors=collect(db,symbols)
-        settle(db,day,quotes)
+        if schedule['version']=='2.1-ready':
+            from invest_ready import advance, status
+            if not advance(db,stamp):return False
+            errors=status(db,day)['errors']
+        else:
+            quotes,errors=collect(db,symbols)
+            settle(db,day,quotes)
         with db() as c:
             if errors:append(c,'data:'+day,'error',day,{'reason':'收盘数据未确认','symbols':errors})
             outcomes=[r for r in events(c) if r['day']==day and r['kind'] in ('fill','rejected')]
@@ -149,15 +155,21 @@ def tick(db,deliver):
         notify(db,day,'close',text[:3500],deliver);return True
     if hm<schedule['research']:return False
     stage='research' if hm<schedule['review'] else 'review'
+    if schedule['version']=='2.1-ready' and hm>schedule['latest_research_start'] and 'research' not in done:stage='research'
     if stage in done:return False
+    if stage=='research' and schedule['version']=='2.1-ready' and hm<=schedule['latest_research_start']:
+        from datetime import datetime
+        with db() as c:closed_at=c.execute("SELECT at FROM invest_events WHERE event_key=?",('settled:'+day,)).fetchone()
+        if not closed_at or (stamp-datetime.fromisoformat(closed_at[0])).total_seconds()<schedule['research_delay_seconds']:return False
     deadline=schedule['deadline'] if stage=='research' else '21:00'
     rid=hashlib.sha256(('olive-invest:'+day+':'+stage).encode()).hexdigest()[:32]
-    if hm>=deadline:
+    if hm>=deadline or stage=='research' and schedule['version']=='2.1-ready' and hm>schedule['latest_research_start']:
         with db() as c:
-            c.execute('INSERT INTO invest_runs VALUES(?,?,?,?,?,?,?)',(rid,day,stage,'missed',stamp.isoformat(),stamp.isoformat(),'错过窗口，不补跑'))
+            c.execute('INSERT OR IGNORE INTO invest_runs VALUES(?,?,?,?,?,?,?)',(rid,day,stage,'missed',stamp.isoformat(),stamp.isoformat(),'错过窗口，不补跑'))
             append(c,'missed:'+day+':'+stage,'missed',day,{'stage':stage,'reason':'错过窗口，未回填'})
         return False
-    with db() as c:c.execute('INSERT INTO invest_runs VALUES(?,?,?,?,?,?,?)',(rid,day,stage,'running',stamp.isoformat(),None,None))
+    with db() as c:
+        if c.execute('INSERT OR IGNORE INTO invest_runs VALUES(?,?,?,?,?,?,?)',(rid,day,stage,'running',stamp.isoformat(),None,None)).rowcount!=1:return False
     error=None
     try:
         invoke(prompt({'id':rid,'day':day,'stage':stage},db),rid)

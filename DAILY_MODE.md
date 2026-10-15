@@ -76,3 +76,42 @@ including the activation event. Do not restart old intraday trading merely
 because old code was restored; resumption needs a compatible mode decision.
 Never reset or rewrite the journal to roll back code. Missing original benchmark
 base remains missing; this mode change does not invent or repair past returns.
+
+
+## 2.1-ready scheduled from 2026-10-16
+
+An appended `rules:2.1-ready` event schedules this version; selection uses the
+Beijing date. It does not modify 2.0-daily, report #28 or today's terminal work.
+Required prices and eligibility are unchanged. Execution dates already stored
+in reports are never recalculated by readiness or new calendar selection.
+
+Persisted transitions in `invest_readiness` are:
+`waiting -> checking -> waiting | finalizing -> settled`.
+Each of the 16:30, 17:00, 17:30, 18:00 and 18:30 slots can be claimed once,
+with an atomic owner claim and a five-minute lease/window. An interrupted slot
+is marked interrupted, never retried. Later slots can continue. Late arrivals
+skip expired slots; no new readiness requests start at or after 18:35.
+Each symbol is checked at most once per slot; 401/403 stops retries for that
+symbol that day. Every response checkpoints raw public data, its original
+acquisition time and diagnostics, without writing quote/evidence journal rows
+or invoking a model while waiting. No waiting sleep is added to the worker.
+
+Required symbols are CSI300, current holdings and frozen orders whose stored
+execution_day is today. Unqueried research candidates are not presumed ready.
+When all required quotes verify, or after the last slot, current-day cache no
+older than one hour is persisted idempotently and settlement runs once.
+Unverified/missing individual orders are rejected under the existing rules.
+A restart after quote persistence cannot duplicate evidence or a fill; an
+existing settled event is always terminal, even if the state update was lost.
+No late prices can reopen a completed settlement or research report.
+
+Research starts at least five minutes after settlement, once, no later than
+18:50, with an absolute 19:00 submission cutoff. Its existing eight-minute
+model budget and six-minute collection limit begin only when the model starts.
+If the worker misses that window it records missed research and never backfills.
+Review remains 20:00-21:00. A delayed/missing price does not move execution_day
+or permit another same-day investment decision.
+
+Rollback code to 0.1.14 / 15c01ae342f35bc9e174576ba458f1a388805fbe only after
+pausing investment execution; preserve all runtime tables and rules events.
+Older code does not understand the future mode, so do not resume it silently.

@@ -161,14 +161,15 @@ def install(app, data, home=None, access_path=None):
     def audit_rules():
         pagination()
         from investment import RULES
-        from invest_daily import RULES_DAILY
-        current=RULES;mode_verified=False
+        from invest_daily import RULES_DAILY, rules, now
+        current=RULES;mode_verified=False;scheduled=[]
         if mango.is_file():
             with readonly(mango) as c:
                 if c.execute("SELECT 1 FROM sqlite_master WHERE name='invest_events'").fetchone():
                     mode_verified=True
-                    if c.execute("SELECT 1 FROM invest_events WHERE event_key='rules:2.0-daily'").fetchone():current=RULES_DAILY
-        return response({'investment':current,'mode_verified':mode_verified,
+                    current=rules(lambda:readonly(mango))
+                    scheduled=[json.loads(r[0]) for r in c.execute("SELECT payload FROM invest_events WHERE kind='rules' AND day>? ORDER BY day LIMIT 5",(now().date().isoformat(),))]
+        return response({'investment':current,'mode_verified':mode_verified,'scheduled_investment_rules':scheduled,
                          'olive_rules':document(home/'.openclaw/workspace/AGENTS.md'),
                          'olive_identity':document(home/'.openclaw/workspace/IDENTITY.md'),
                          'olive_soul':document(home/'.openclaw/workspace/SOUL.md'),
@@ -207,6 +208,9 @@ def install(app, data, home=None, access_path=None):
         if agent=='olive':
             with readonly(mango) as c:
                 available=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='invest_market_requests'").fetchone()
+                readiness=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='invest_readiness'").fetchone()
+            if readiness:
+                result['readiness']=rows(mango,'SELECT day,state,claimed,substr(checks,1,16000) AS checks,substr(errors,1,16000) AS errors FROM invest_readiness ORDER BY day DESC LIMIT ? OFFSET ?',(limit,offset))
             if available:
                 result['market_requests']=rows(mango,'SELECT r.day,r.stage,m.started,m.finished,m.ok,m.diagnostics FROM invest_market_requests m JOIN invest_runs r ON r.id=m.run_id ORDER BY m.id DESC LIMIT ? OFFSET ?',(limit,offset))
         return response(result)

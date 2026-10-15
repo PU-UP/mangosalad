@@ -49,7 +49,7 @@ def source_fetch(url, encoding, source):
 
 def budget_reason(run, records, query, stamp):
     deadline=datetime.fromisoformat(run['started'])+timedelta(seconds=FETCH_SECONDS)
-    end=stamp.replace(hour=run.get('deadline_hour',14),minute=55,second=0,microsecond=0) if run['stage']=='research' else stamp.replace(hour=21,minute=0,second=0,microsecond=0)
+    end=stamp.replace(hour=run.get('deadline_hour',14),minute=run.get('deadline_minute',55),second=0,microsecond=0) if run['stage']=='research' else stamp.replace(hour=21,minute=0,second=0,microsecond=0)
     if stamp>=min(deadline,end-timedelta(seconds=120)):return 'submission_time_reserved'
     if len(records)>=MAX_REQUESTS:return 'request_budget_exhausted'
     if sum(r['ok']==0 for r in records)>=MAX_FAILURES:return 'failure_budget_exhausted'
@@ -73,8 +73,9 @@ def market_request(db, symbols):
         row=c.execute("SELECT * FROM invest_runs WHERE status='running' AND day=? ORDER BY started DESC LIMIT 1",(stamp.date().isoformat(),)).fetchone()
         if row:
             run=dict(row)
-            from invest_daily import active
-            if active(db):run['deadline_hour']=16
+            from invest_daily import rules
+            schedule=rules(db,stamp.date().isoformat())
+            run['deadline_hour'],run['deadline_minute']=map(int,schedule['deadline'].split(':'))
             records=[dict(r) for r in c.execute('SELECT query,finished,ok FROM invest_market_requests WHERE run_id=? ORDER BY id',(run['id'],))]
             reason=budget_reason(run,records,query,stamp)
             if reason:

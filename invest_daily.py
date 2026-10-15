@@ -21,7 +21,11 @@ def active(db):
         return bool(c.execute("SELECT 1 FROM invest_events WHERE event_key='rules:2.0-daily'").fetchone())
 
 
-def rules(db):
+def rules(db, day=None):
+    from invest_ready import RULES_READY
+    day=day or now().date().isoformat()
+    with db() as c:
+        if day>=RULES_READY['effective_day'] and c.execute("SELECT 1 FROM invest_events WHERE event_key='rules:2.1-ready'").fetchone():return RULES_READY
     return RULES_DAILY if active(db) else RULES
 
 
@@ -45,7 +49,7 @@ def activate(db):
 
 
 def pending(c, day):
-    return [r for r in events(c,'research') if r['payload'].get('rules_version')==RULES_DAILY['version']
+    return [r for r in events(c,'research') if r['payload'].get('rules_version') in ('2.0-daily','2.1-ready')
             and r['payload'].get('execution_day')==day and r['day']<day]
 
 
@@ -77,7 +81,7 @@ def parse_bars(rows, source):
     return bars
 
 
-def snapshot(db,symbol):
+def probe(db,symbol):
     from invest_market import source_fetch, MarketDataError
     if not symbol_ok(symbol) and symbol!='sh000300':raise ValueError('Unsupported symbol')
     observed=now();day=observed.date().isoformat()
@@ -121,21 +125,38 @@ def snapshot(db,symbol):
                 and x['volume']>0 and y['volume']>0 and float(t[6])>0 and down<=x['close']<=up)
             reason='' if eligible else 'Trading status, ordinary limits or dual-source data not verified'
         except (ValueError,KeyError,TypeError,IndexError):pass
-    ids=[evidence(db,u,r,day) for u,r in zip(urls,raws)]
+    result={'id':None,'symbol':symbol,'name':name,'day':day,'observed_at':observed.isoformat(),
+            'quote_at':day+'T15:00:00+08:00','second_quote_at':day+'T15:00:00+08:00',
+            'timestamp_basis':'daily session label, not a provider publication timestamp',
+            'price_fen':x['close'],'previous_fen':prev,'upper_fen':up,'lower_fen':down,
+            'verified':verified,'eligible':eligible,'eligibility_reason':reason,'final':True,
+            'corporate_action':False,'evidence_ids':[],'sources':['tencent_daily','sina_daily'],
+            'rules_version':rules(db,day)['version'],'volume_shares':y['volume'],'amount_cny':y['amount'],
+            'amount_source':'sina_daily','price_unit':'index_points' if symbol=='sh000300' else 'CNY',
+            'status_source':'tencent daily response closing metadata; ordinary limits cross-checked against both prior closes','adjust':'none','history':[[d,a[d]['open']/100,a[d]['close']/100,a[d]['high']/100,a[d]['low']/100,a[d]['volume']] for d in history_days]}
+    return {**result,'_urls':urls,'_raws':raws}
+
+
+def save_probe(db, result):
+    import hashlib
+    result=dict(result);urls=result.pop('_urls');raws=result.pop('_raws')
+    day=result['day'];symbol=result['symbol'];prev=result['previous_fen'];at=result['observed_at']
+    ids=[hashlib.sha256(dump([u,at,hashlib.sha256(raw.encode()).hexdigest()]).encode()).hexdigest()[:24] for u,raw in zip(urls,raws)]
     with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        old=c.execute("SELECT payload FROM invest_events WHERE event_key=?",('quote:'+ids[0],)).fetchone()
+        if old:return json.loads(old[0])
+        for eid,u,raw in zip(ids,urls,raws):
+            c.execute('INSERT INTO invest_evidence VALUES(?,?,?,?,?,?,?)',(eid,at,u,day,None,raw,hashlib.sha256(raw.encode()).hexdigest()))
         prior=next((r['payload'] for r in reversed(events(c,'quote')) if r['day']<day and r['payload']['symbol']==symbol and r['payload'].get('final')),None)
         action=bool(prior and prior['price_fen']!=prev)
         if action:
             action=not any(r['payload']['symbol']==symbol and r['payload']['ex_day']==day and
                 abs(prior['price_fen']-prev-float(r['payload']['fen_per_share']))<=1 for r in events(c,'dividend_terms'))
-        result={'id':ids[0],'symbol':symbol,'name':name,'day':day,'observed_at':observed.isoformat(),
-            'quote_at':day+'T15:00:00+08:00','second_quote_at':day+'T15:00:00+08:00',
-            'timestamp_basis':'daily session label, not a provider publication timestamp',
-            'price_fen':x['close'],'previous_fen':prev,'upper_fen':up,'lower_fen':down,
-            'verified':verified,'eligible':eligible,'eligibility_reason':reason,'final':True,
-            'corporate_action':action,'evidence_ids':ids,'sources':['tencent_daily','sina_daily'],
-            'rules_version':RULES_DAILY['version'],'volume_shares':y['volume'],'amount_cny':y['amount'],
-            'amount_source':'sina_daily','price_unit':'index_points' if symbol=='sh000300' else 'CNY',
-            'status_source':'tencent daily response closing metadata; ordinary limits cross-checked against both prior closes','adjust':'none','history':[[d,a[d]['open']/100,a[d]['close']/100,a[d]['high']/100,a[d]['low']/100,a[d]['volume']] for d in history_days]}
-        c.execute('BEGIN IMMEDIATE');append(c,'quote:'+result['id'],'quote',day,result)
+        result.update(id=ids[0],evidence_ids=ids,corporate_action=action)
+        append(c,'quote:'+result['id'],'quote',day,result,at)
     return result
+
+
+def snapshot(db,symbol):
+    return save_probe(db,probe(db,symbol))

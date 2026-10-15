@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory() as folder:
     assert daily.adjacent('2026-09-30')=='2026-10-08'
     rejects(lambda:daily.adjacent('2026-12-31'))
 
-    sequence=[0]
+    sequence=[-1]
     def quote(symbol='sh600519',when=stamp,mutate=None):
         sequence[0]+=1
         stored_at=when-timedelta(seconds=1)+timedelta(microseconds=sequence[0])
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory() as folder:
         b=[{'date':r[0]+'T00:00:00.000Z','open':r[1],'close':r[2],'high':r[3],'low':r[4],'volume':10000,'amount':100000} for r in rows]
         if mutate:mutate(a,b)
         def source(url,*args):return json.dumps(a) if 'gtimg.cn' in url else 'compressed fixture'
-        with patch('investment.now',return_value=stored_at),patch('invest_daily.now',return_value=when),patch('invest_market.source_fetch',side_effect=source),patch('invest_daily.decode_sina',return_value=b):
+        with patch('investment.now',return_value=stored_at),patch('invest_daily.now',return_value=when+timedelta(microseconds=sequence[0])),patch('invest_market.source_fetch',side_effect=source),patch('invest_daily.decode_sina',return_value=b):
             return market.snapshot(db,symbol)
     q=quote();assert q['verified'] and q['eligible'] and q['final']
     assert all(r[0]<='2026-10-15' for r in q['history'])

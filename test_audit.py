@@ -145,4 +145,11 @@ with tempfile.TemporaryDirectory() as temp:
     result=normal.get('/api/audit/rules')
     assert result.status_code==200 and result.json['data']['investment']['version']=='2.0-daily'
     assert result.json['data']['mode_verified'] is True
+    from invest_ready import schedule
+    with patch('invest_ready.now',return_value=datetime(2026,10,15,17,tzinfo=TZ)):schedule(db)
+    with patch('invest_daily.now',return_value=datetime(2026,10,15,17,tzinfo=TZ)):
+        data=normal.get('/api/audit/rules').json['data']
+        assert data['investment']['version']=='2.0-daily' and data['scheduled_investment_rules'][0]['version']=='2.1-ready'
+    with patch('invest_daily.now',return_value=datetime(2026,10,16,17,tzinfo=TZ)):
+        assert normal.get('/api/audit/rules').json['data']['investment']['version']=='2.1-ready'
 print('Audit security and integration checks passed')
