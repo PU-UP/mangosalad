@@ -1,6 +1,7 @@
 """Two bounded olive runs and one close settlement, on the existing serial worker."""
 import hashlib
 import json
+import logging
 import subprocess
 import time
 from datetime import date,timedelta
@@ -80,11 +81,24 @@ partial=true表示只有部分代码成功；逐条核对quotes中的verified/el
 def invoke(message,run_id,timeout=480):
     params={'agentId':'main','sessionKey':'agent:main:mangosalad:'+run_id,'message':message,
             'idempotencyKey':run_id,'deliver':False,'disableMessageTool':True,'timeout':timeout}
-    command=[str(Path.home()/'.npm-global/bin/openclaw'),'gateway','call','agent','--params',dump(params),
-             '--expect-final','--timeout',str((timeout+20)*1000),'--json']
-    try:result=subprocess.run(command,cwd=Path.home()/'.openclaw/workspace',capture_output=True,text=True,timeout=timeout+40)
-    except subprocess.TimeoutExpired:raise InvestmentRunError('agent_timeout') from None
-    if result.returncode:raise InvestmentRunError('gateway_call_failed')
+    payload=dump(params)
+    payload_bytes=len(payload.encode('utf-8'))
+    command=['node',str(Path(__file__).with_name('invoke_olive.mjs'))]
+    def diagnostic(category,errno=None):
+        logging.getLogger(__name__).error('olive invocation category=%s errno=%s request_bytes=%s',
+                                         category,errno,payload_bytes)
+    try:
+        result=subprocess.run(command,input=payload,cwd=Path.home()/'.openclaw/workspace',
+                              capture_output=True,text=True,encoding='utf-8',timeout=timeout+40)
+    except subprocess.TimeoutExpired:
+        diagnostic('agent_timeout')
+        raise InvestmentRunError('agent_timeout') from None
+    except OSError as e:
+        diagnostic('gateway_spawn_failed',e.errno)
+        raise InvestmentRunError('gateway_spawn_failed') from None
+    if result.returncode:
+        diagnostic('gateway_call_failed')
+        raise InvestmentRunError('gateway_call_failed')
     try:data=json.loads(result.stdout)
     except (ValueError,TypeError):raise InvestmentRunError('gateway_response_invalid') from None
     texts=[]
