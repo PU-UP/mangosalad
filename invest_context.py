@@ -10,7 +10,7 @@ def reviews(data):
 
 
 def report_reference(report_id):
-    return 'python3 /home/ubuntu/mangosalad-desk/invest_cli.py status --report-id '+str(report_id)
+    return 'python3 /home/ubuntu/mangosalad-desk/invest_model_cli.py status --report-id '+str(report_id)
 
 
 def full_report(export, report_id, annotations=()):

@@ -22,7 +22,7 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(json.loads(data)['account'],original['account'])
             self.assertEqual(json.loads(data)['hypotheses'][0]['falsifier'],original['hypotheses'][0]['falsifier'])
             self.assertNotIn('旧报告声称70%',data)
-            self.assertIn('--model-context',prefix)
+            self.assertIn('invest_model_cli.py status',prefix)
             self.assertEqual(state,original)
             self.assertIn(worker.dump(original['rules']),prefix)
             self.assertNotIn('旧报告声称70%',prefix)

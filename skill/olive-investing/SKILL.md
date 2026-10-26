@@ -37,7 +37,7 @@ description: Olive 的 Mango Salad 日线模拟投资实验；仅模拟，确定
 
 ## 工具与数据
 
-只用 `python3 /home/ubuntu/mangosalad-desk/invest_cli.py`：status、market、market --symbols sh600519,sz000001、evidence --file、report --file、export。每次market最多3个代码。无参数market不再提供盘中成交额榜；候选来自公开研究，不是固定股票池。持仓必须检查，数量服从证据，不强迫凑够候选或交易。
+自然研究/复盘使用模型入口 `python3 /home/ubuntu/mangosalad-desk/invest_model_cli.py`：status（默认模型投影，不需额外flag）、status --report-id ID（完整原报告及独立审查标记）、market、market --symbols sh600519,sz000001、evidence --file、report --file。历史反方证据和解释正文通过投影中的full_report_command按需读取，省略不等于反方证据不存在。原invest_cli.py默认status/export及网页审计仍供人工全量查看；自然任务不以全量status/export代替模型入口。每次market最多3个代码。无参数market不再提供盘中成交额榜；候选来自公开研究，不是固定股票池。持仓必须检查，数量服从证据，不强迫凑够候选或交易。
 
 market只接受当天16:00后完整日线：腾讯＋新浪，不复权。沪深300代码sh000300。检查ok/errors和每条quotes的verified/eligible/day/rules_version，partial只代表部分代码成功。当天缺失/未来/过期数据都不能充当第二源。成交额目前仅新浪提供，不能称其经过双源核验。日线date是交易日标签，不是供应商发布时间。
 
