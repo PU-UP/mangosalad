@@ -135,7 +135,11 @@ def run_task(task):
             return
         finish(task['id'],'cancelled',error='已停止本次工作；此前已产生的操作无法自动撤回。');return
     with db() as c:r=c.execute('SELECT acknowledged FROM tasks WHERE id=?',(task['id'],)).fetchone()
+    from task_recovery import outcome, register, scoped
+    raw_output=(folder/'stdout.log').read_text() if scoped(task) else ''
+    classified=outcome(task,raw_output,proc.returncode,expired,bool(r and r['acknowledged']))
     try:
+        if classified:raise ValueError('Classified transport outcome')
         if expired or proc.returncode or not r or not r['acknowledged']:raise ValueError('No successful acknowledgement or run')
         output=(folder/'stdout.log').read_text()
         if task['agent']=='olive':
@@ -155,12 +159,19 @@ def run_task(task):
     except Exception:
         text='这份网页任务尚未完成。请在网页查看状态，确认后可重新交给我。'
         status,kind,error='failed',None,'Agent 未完成有效接单或交付；未自动重跑。'
+        if classified:
+            text,status,error=classified['message'],classified['status'],classified['error']
+            if classified['recover']:register(folder,task)
+        elif task['page_id']=='hM5d9av_ph0n' and task['agent']=='olive':
+            text='已接单，但未取得有效交付格式；是否完成须核对现有成果，不自动重跑。'
+            error='delivery_envelope_invalid: '+text
+
     if not finish(task['id'],status,text,error,kind,olive_session(task['id']) if task['agent']=='olive' else None):return
     try:
         receipt=send(task['agent'],'【网页任务 · '+json.loads(task['snapshot'])['title']+'】\n'+text+'\n\nhttps://mangosalad.cn/#page='+task['page_id'],task['id'])
         with db() as c:c.execute('UPDATE tasks SET receipt=? WHERE id=?',(receipt,task['id']))
     except Exception:
-        with db() as c:c.execute("UPDATE tasks SET error='处理结果已保存，但飞书发送未确认；请核对飞书，不会自动重复发送。',revision=revision+1 WHERE id=?",(task['id'],))
+        with db() as c:c.execute("UPDATE tasks SET error=CASE WHEN page_id='hM5d9av_ph0n' AND agent='olive' AND error IS NOT NULL THEN error || char(10) ELSE '' END || '处理结果已保存，但飞书发送未确认；请核对飞书，不会自动重复发送。',revision=revision+1 WHERE id=?",(task['id'],))
 
 
 if __name__=='__main__':
@@ -174,6 +185,11 @@ if __name__=='__main__':
     from invest_worker import tick as invest_tick, recover as invest_recover
     os.umask(0o077);recover();invest_recover(db)
     while True:
+        try:
+            from task_recovery import collect
+            collect(db,DATA,Path.home()/'.openclaw/agents/main/agent/openclaw-agent.sqlite',envelope)
+        except Exception:
+            print('Macro result recovery unavailable; no task replay',flush=True)
         try:
             if invest_tick(db,send):continue
         except Exception:
