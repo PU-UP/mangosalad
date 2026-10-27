@@ -1,0 +1,6 @@
+{
+  "id": "olive-invest-closure",
+  "name": "Olive investing execution closure",
+  "contracts": {"trustedToolPolicies": ["investment-phase-budget"]},
+  "configSchema": {"type": "object", "additionalProperties": false, "properties": {}}
+}

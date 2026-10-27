@@ -73,7 +73,9 @@ with fixture() as db:
         assert inv.events(c,'quote')[0]['payload']['observed_at'].startswith('2026-10-16T17:00')
     with at(17,4),patch('invest_worker.invoke') as model:
         assert not worker.tick(db,lambda *a:None);model.assert_not_called()
-    def invoke(text,rid):inv.submit(db,report(rid))
+    def invoke(text,rid,timeout=480):
+        assert 0 < timeout <= 1200
+        inv.submit(db,report(rid))
     with at(17,5),patch('invest_worker.invoke',side_effect=invoke) as model:
         assert worker.tick(db,lambda *a:None);assert model.call_count==1
         assert not worker.tick(db,lambda *a:None);assert model.call_count==1
