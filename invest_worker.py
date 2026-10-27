@@ -193,6 +193,7 @@ def tick(db,deliver):
     with db() as c:
         if c.execute('INSERT OR IGNORE INTO invest_runs VALUES(?,?,?,?,?,?,?)',(rid,day,stage,'running',stamp.isoformat(),None,None)).rowcount!=1:return False
     error=None
+    stopped=True
     try:
         invoke(prompt({'id':rid,'day':day,'stage':stage},db),rid)
         with db() as c:
@@ -200,10 +201,26 @@ def tick(db,deliver):
         if not report:raise InvestmentRunError('report_missing')
     except Exception as e:
         category=e.category if isinstance(e,InvestmentRunError) else 'execution_error'
-        error=category+'：执行/提交未完成，不自动重跑'
-        if not abort_run(rid):
+        error=category+'：执行未正常完成，不自动重跑'
+        stopped=abort_run(rid)
+        if not stopped:
             with db() as c:c.execute('UPDATE invest_control SET enabled=0')
             error+='；未确认停止，已暂停实验'
+    # Reconcile AFTER confirmed stop (or normal return); never replay a missing/uncertain submission.
+    from invest_closure import reconcile, persist
+    from app import DATA
+    receipt=reconcile(db,rid,day,stage)
+    receipt.update(day=day,stage=stage,execution='failed' if error else 'returned',stop_confirmed=stopped)
+    if not error and receipt['report']!='saved':
+        error='report_unverified：报告未与当前运行匹配，不自动重跑'
+    if error and receipt['report']=='saved':
+        error+='；报告已保存 #'+str(receipt['event_id'])+'，执行结果仍异常，报告未改写'
+    elif error:
+        error+='；报告对账状态='+receipt['report']
+    try:
+        persist(DATA/'invest-run-receipts',rid,receipt)
+    except (OSError,ValueError,RuntimeError):
+        error=(error+'；' if error else '')+'运行诊断保存/回读失败，不自动重跑'
     with db() as c:
         c.execute('UPDATE invest_runs SET status=?,finished=?,error=? WHERE id=?',('failed' if error else 'done',now().isoformat(),error,rid))
         if error:append(c,'run-error:'+rid,'error',day,{'stage':stage,'reason':error})
