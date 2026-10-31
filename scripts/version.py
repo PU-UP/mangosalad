@@ -26,8 +26,16 @@ elif mode=='message':
 elif mode=='check':
     for commit in git('rev-list','--reverse','HEAD').splitlines():
         value=version(git('show',commit+':VERSION'))
-        for parent in git('show','-s','--format=%P',commit).split():
-            assert value>version(git('show',parent+':VERSION')), 'Version did not increase: '+commit
-        assert git('show','-s','--format=%s',commit).startswith('[v'+'.'.join(map(str,value))+'] '), 'Missing version in message'
+        parents=git('show','-s','--format=%P',commit).split()
+        parent_versions=[version(git('show',parent+':VERSION')) for parent in parents]
+        subject=git('show','-s','--format=%s',commit)
+        if len(parents)>1:
+            # GitHub merge commits keep the branch tip VERSION; require not below any parent.
+            assert parent_versions and value>=max(parent_versions), 'Merge version below a parent: '+commit
+            assert subject.startswith('[v'+'.'.join(map(str,value))+'] ') or subject.startswith('Merge '), 'Missing version in merge message'
+        else:
+            for parent_version in parent_versions:
+                assert value>parent_version, 'Version did not increase: '+commit
+            assert subject.startswith('[v'+'.'.join(map(str,value))+'] '), 'Missing version in message'
     print('Version history verified')
 else: raise SystemExit('Use bump, message or check')
