@@ -6,6 +6,8 @@ from investment import now, dump, events, replay, settle, append
 from invest_daily import RULES_DAILY, pending, probe, save_probe
 
 RULES_READY={**RULES_DAILY,'version':'2.1-ready','effective_day':'2026-10-16',
+    'max_buy_price_fen':20000,
+    'max_buy':'新买入单价不得超过200元/股（max_buy_price_fen=20000）；仅拒绝超限新买入，已有持仓不因该上限被自动卖出。平台拒绝是唯一成交门槛，模型说明不能放行。',
     'settle':'16:30','research':'16:30','deadline':'19:00','latest_research_start':'18:50',
     'readiness_slots':['16:30','17:00','17:30','18:00','18:30'],
     'readiness_check_window_seconds':300,'research_delay_seconds':300,

@@ -141,6 +141,13 @@ def start(db, day):
         append(c, 'start', 'start', day, {'initial_fen':RULES['initial_fen'], 'evaluate_on':(date.fromisoformat(day)+timedelta(days=89)).isoformat()})
 
 
+def buy_over_cap(schedule, side, price_fen):
+    cap=schedule.get('max_buy_price_fen')
+    if side!='buy' or cap is None: return None
+    if type(price_fen) is not int or price_fen<=cap: return None
+    return '买入价超过平台上限（'+str(cap)+'分/股），不成交'
+
+
 def text_field(value, name):
     if not isinstance(value, str) or not value.strip() or len(value) > 6000: raise ValueError('缺少或过长：'+name)
 
@@ -200,6 +207,8 @@ def submit(db, body, stamp=None):
             age=(stamp-datetime.fromisoformat(q['observed_at'])).total_seconds()
             if daily and (q.get('rules_version')!=schedule['version'] or not q.get('final') or q.get('corporate_action')):raise ValueError('Daily quote not verified for this mode')
             if not 0<=age<=(schedule['quote_max_age_seconds'] if daily else 300): raise ValueError('Quote acquisition age exceeds mode limit; fetch again')
+            cap_reason=buy_over_cap(schedule,order['side'],q['price_fen'])
+            if cap_reason: raise ValueError(cap_reason)
         for review in body['reviews']:
             if not isinstance(review,dict) or set(review)!={'report_id','symbol','verdict','reason','evidence_ids'}: raise ValueError('复核结构无效')
             if review['verdict'] not in ('pending','supported','refuted','unverifiable'): raise ValueError('复核结论无效')
@@ -239,6 +248,7 @@ def settle(db, day, quotes, stamp=None):
                 available=sum(x['qty'] for x in pos['lots'] if x['day']<day)
                 if qty>available or (qty%100 and qty!=pos['qty']): reason='超出可卖数量或不满足T+1/零股规则'
             if not reason and order['side']=='buy' and qty*q['price_fen']>account['cash_fen']: reason='收盘价下现金不足，不调整锁定数量'
+            if not reason: reason=buy_over_cap(schedule,order['side'],q['price_fen'])
             key='order:'+day+':'+str(index)
             if reason: append(c,key,'rejected',day,{'order':order,'reason':reason})
             else:
