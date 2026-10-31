@@ -10,7 +10,8 @@ from investment import now, dump, trading_day, append, events, replay, settle, s
 
 
 class InvestmentRunError(Exception):
-    def __init__(self, category):
+    def __init__(self, category, stop_confirmed=None):
+        self.stop_confirmed=stop_confirmed
         self.category=category
         super().__init__(category)
 
@@ -89,7 +90,7 @@ partial=true表示只有部分代码成功；逐条核对quotes中的verified/el
 '''
 
 
-def invoke(message,run_id,timeout=480):
+def invoke(message,run_id,timeout=480,saved_report=None):
     params={'agentId':'main','sessionKey':'agent:main:mangosalad:'+run_id,'message':message,
             'idempotencyKey':run_id,'deliver':False,'disableMessageTool':True,'timeout':timeout}
     payload=dump(params)
@@ -99,8 +100,19 @@ def invoke(message,run_id,timeout=480):
         logging.getLogger(__name__).error('olive invocation category=%s errno=%s request_bytes=%s',
                                          category,errno,payload_bytes)
     try:
-        result=subprocess.run(command,input=payload,cwd=Path.home()/'.openclaw/workspace',
-                              capture_output=True,text=True,encoding='utf-8',timeout=timeout+40)
+        closed=None
+        if saved_report is None:
+            result=subprocess.run(command,input=payload,cwd=Path.home()/'.openclaw/workspace',
+                                  capture_output=True,text=True,encoding='utf-8',timeout=timeout+40)
+        else:
+            from invest_saved_close import collect, SavedCloseError
+            process=subprocess.Popen(command,cwd=Path.home()/'.openclaw/workspace',
+                                     stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                                     text=True,encoding='utf-8')
+            try:
+                result,closed=collect(process,payload,timeout,saved_report,lambda:abort_run(run_id))
+            except SavedCloseError as e:
+                raise InvestmentRunError(e.category,e.stop_confirmed) from None
     except subprocess.TimeoutExpired:
         diagnostic('agent_timeout')
         raise InvestmentRunError('agent_timeout') from None
@@ -111,7 +123,7 @@ def invoke(message,run_id,timeout=480):
         diagnostic('gateway_call_failed')
         raise InvestmentRunError('gateway_call_failed')
     try:data=json.loads(result.stdout)
-    except (ValueError,TypeError):raise InvestmentRunError('gateway_response_invalid') from None
+    except (ValueError,TypeError):raise InvestmentRunError('gateway_response_invalid',True if closed else None) from None
     texts=[]
     def walk(x):
         if isinstance(x,dict):
@@ -123,8 +135,8 @@ def invoke(message,run_id,timeout=480):
     walk(data)
     text='\n'.join(texts)
     if 'Request timed out before a response was generated.' in text:
-        raise InvestmentRunError('agent_timeout')
-    return text
+        raise InvestmentRunError('agent_timeout',True if closed else None)
+    return closed or text
 
 
 def notify(db,day,stage,message,deliver):
@@ -198,6 +210,7 @@ def tick(db,deliver):
     error=None
     stopped=True
     dispatched=False
+    completion=None
     try:
         from invest_budget import plan, remaining
         from invest_closure import persist
@@ -212,14 +225,16 @@ def tick(db,deliver):
         timeout=remaining(contract,now())
         if timeout<=0:raise InvestmentRunError('window_budget_exhausted')
         dispatched=True
-        invoke(message,rid,timeout=timeout)
+        from invest_closure import reconcile
+        completion=invoke(message,rid,timeout=timeout,saved_report=lambda:reconcile(db,rid,day,stage))
         with db() as c:
             report=c.execute('SELECT payload FROM invest_events WHERE event_key=?',(stage+':'+day,)).fetchone()
         if not report:raise InvestmentRunError('report_missing')
     except Exception as e:
         category=e.category if isinstance(e,InvestmentRunError) else 'execution_error'
         error=category+'：执行未正常完成，不自动重跑'
-        stopped=abort_run(rid) if dispatched else True
+        prior_stop=getattr(e,"stop_confirmed",None)
+        stopped=prior_stop if prior_stop is not None else (abort_run(rid) if dispatched else True)
         if not stopped:
             with db() as c:c.execute('UPDATE invest_control SET enabled=0')
             error+='；未确认停止，已暂停实验'
@@ -227,7 +242,10 @@ def tick(db,deliver):
     from invest_closure import reconcile, persist
     from app import DATA
     receipt=reconcile(db,rid,day,stage)
-    receipt.update(day=day,stage=stage,execution='failed' if error else 'returned',stop_confirmed=stopped)
+    receipt.update(day=day,stage=stage,execution='failed' if error else ('host_stopped_after_report' if isinstance(completion,dict) else 'returned'),stop_confirmed=stopped)
+    if isinstance(completion,dict) and any(receipt.get(k)!=completion.get(k) for k in ('report','event_id','payload_sha256')):
+        error='saved_report_changed_after_stop：报告回读不一致，不自动重跑'
+        receipt['execution']='failed'
     if not error and receipt['report']!='saved':
         error='report_unverified：报告未与当前运行匹配，不自动重跑'
     if error and receipt['report']=='saved':
@@ -243,6 +261,7 @@ def tick(db,deliver):
         if error:append(c,'run-error:'+rid,'error',day,{'stage':stage,'reason':error})
     if stage=='review':
         text=error or json.loads(report[0])['summary']+'\n\n反证：'+json.loads(report[0])['counterevidence']+'\n\n明日计划：'+json.loads(report[0])['next_plan']
+        if not error and isinstance(completion,dict):text='运行收尾：报告已核验，系统结束后续执行（非模型自然结束）。\n'+text
         notify(db,day,stage,'【olive · 晚间复盘】\n'+text[:3400],deliver)
     return True
 

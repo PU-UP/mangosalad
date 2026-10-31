@@ -1,5 +1,6 @@
 """Readiness transitions with synthetic data, real SQLite and no network/model."""
 import tempfile,sqlite3,json,threading
+from pathlib import Path
 from contextlib import contextmanager, ExitStack
 from datetime import datetime,timedelta
 from unittest.mock import patch
@@ -33,7 +34,8 @@ def fixture():
         with patch('invest_ready.now',return_value=datetime(2026,10,15,17,tzinfo=inv.TZ)):ready.schedule(db)
         assert daily.rules(db,'2026-10-15')['version']=='2.0-daily'
         assert daily.rules(db,'2026-10-16')['version']=='2.1-ready'
-        yield db
+        with patch("app.DATA",Path(folder)/"runtime"), patch("invest_worker.abort_run",return_value=True):
+            yield db
         with db() as c:assert c.execute('SELECT digest FROM invest_events WHERE id=28').fetchone()[0]==before
 
 def report(rid):
@@ -73,7 +75,7 @@ with fixture() as db:
         assert inv.events(c,'quote')[0]['payload']['observed_at'].startswith('2026-10-16T17:00')
     with at(17,4),patch('invest_worker.invoke') as model:
         assert not worker.tick(db,lambda *a:None);model.assert_not_called()
-    def invoke(text,rid,timeout=480):
+    def invoke(text,rid,timeout=480,saved_report=None):
         assert 0 < timeout <= 1200
         inv.submit(db,report(rid))
     with at(17,5),patch('invest_worker.invoke',side_effect=invoke) as model:
@@ -190,3 +192,27 @@ run={'started':stamp.isoformat(),'stage':'research','deadline_hour':19,'deadline
 assert budget_reason(run,[], 'x',stamp+timedelta(minutes=5)) is None
 assert budget_reason(run,[], 'x',stamp+timedelta(minutes=6))=='submission_time_reserved'
 print('PASS readiness: future rules, #28 preserved, 5 slots, partial/all missing, true timestamps, single settlement/research, holidays, concurrency, crash recovery, late cutoff, independent model budget')
+
+# Host closure integration uses synthetic ledger and never invokes a provider.
+for outcome in ('host_saved', 'saved_timeout', 'stop_unknown'):
+    with fixture() as db:
+        with at(17), patch('invest_ready.probe', side_effect=quote):
+            assert ready.advance(db)
+        def host_invoke(text, rid, timeout=480, saved_report=None):
+            inv.submit(db, report(rid))
+            receipt = saved_report()
+            assert receipt['report'] == 'saved'
+            if outcome == 'saved_timeout':
+                raise worker.InvestmentRunError('agent_timeout', True)
+            if outcome == 'stop_unknown':
+                raise worker.InvestmentRunError('saved_report_stop_unconfirmed', False)
+            return dict(receipt, execution='host_stopped_after_report', stop_confirmed=True)
+        with at(17,5), patch('invest_worker.invoke', side_effect=host_invoke), patch('invest_worker.abort_run') as abort:
+            assert worker.tick(db, lambda *a:None)
+            abort.assert_not_called()
+        with db() as c:
+            run=c.execute('select * from invest_runs').fetchone()
+            assert run['status'] == ('done' if outcome == 'host_saved' else 'failed')
+            assert len(inv.events(c,'research')) == 2 # immutable fixture plus exactly one new report
+            assert c.execute('select enabled from invest_control').fetchone()[0] == (0 if outcome == 'stop_unknown' else 1)
+print('PASS host closure: saved completion, saved timeout remains failure, unknown stop pauses without retry')
